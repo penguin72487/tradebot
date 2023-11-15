@@ -1,0 +1,111 @@
+//@version=4
+strategy("Combined WTT Volume and Fibonacci Channel Strategy - Optimized", shorttitle="WTT+Fib Opt", overlay=true)
+startYear = input(2023, "Start Year")
+startMonth = input(11, "Start Month")
+startDay = input(1, "Start Day")
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime
+timelock = input(0,title = "time Lookback lock")
+// Input parameters
+fibStartLength = input(70, minval=1, title="Fibonacci Lookback Period Start")
+fibEndLength = input(1, minval=1, title="Fibonacci Lookback Period End")
+trend_ma_length = input(5, "Volume Trend SMA length", type=input.integer)
+atrLength = input(14, "ATR Length for Stop Loss")
+stopLossMultiplier = input(1.5, "Stop Loss Multiplier")
+takeProfitMultiplier = input(2.5, "Take Profit Multiplier")
+emaLength = input(50, "EMA Length for Trend Filter")
+trailStopAtrMultiplier = input(2.0, title="Trailing Stop ATR Multiplier")
+leverage = input(1, title="Leverage")
+// Calculate Fibonacci levels
+highLevel = highest(high, fibStartLength)
+lowLevel = lowest(low, fibEndLength)
+fibRange = highLevel - lowLevel
+
+fib786 = highLevel - fibRange * 0.786
+fib618 = highLevel - fibRange * 0.618
+fib500 = highLevel - fibRange * 0.500
+fib382 = highLevel - fibRange * 0.382
+fib236 = highLevel - fibRange * 0.236
+fib1 = highLevel - fibRange * 1.0
+fib1618 = highLevel - fibRange * 1.618
+fib2618 = highLevel - fibRange * 2.618
+
+// WTT Volume Trend Logic
+showTrend = input(true, "Show Volume Trend", group="Volume Trend")
+strong_volume_weighting_factor = input(0.8, "Strong volume weighting factor", type=input.float, minval=0.0, maxval=1.0, step=0.1, group="Volume Trend weighting factor")
+weak_volume_weighting_factor = input(0.4, "Weak volume weighting factor", type=input.float, minval=0.0, maxval=1.0, step=0.1, group="Volume Trend weighting factor")
+neutral_volume_weighting_factor = 1
+
+C_Len = 10 // ema depth for bodyAvg
+C_ShadowPercent = 5.0 // size of shadows
+C_DojiBodyPercent = 8.5
+C_BodyHi = max(close, open)
+C_BodyLo = min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+
+is_Bullish = close > open
+is_Bearish = open > close
+is_Doji = abs(close - open) <= ((high - low) * C_DojiBodyPercent / 100)
+
+// Calculating Weighted Volume
+weight_bullish = is_Doji ? neutral_volume_weighting_factor : is_Bullish ? 1 + strong_volume_weighting_factor : 1 - weak_volume_weighting_factor
+weight_bearish = is_Doji ? neutral_volume_weighting_factor : is_Bearish ? 1 + strong_volume_weighting_factor : 1 - weak_volume_weighting_factor
+
+volume_bullish = volume * weight_bullish
+volume_bearish = volume * weight_bearish
+
+bullish_sma = sma(volume_bullish, trend_ma_length)
+bearish_sma = sma(volume_bearish, trend_ma_length)
+
+bullishVolumeTrend = bullish_sma > bearish_sma
+bearishVolumeTrend = bearish_sma > bullish_sma
+// Strategy Entry and Exit Conditions
+
+plot(highLevel, color=color.red, linewidth=2, title="High Level")
+plot(fib618, color=color.blue, linewidth=2, title="Fib 0.618 Level")
+plot(fib500, color=color.purple, linewidth=2, title="Fib 0.500 Level")
+plot(fib382, color=color.orange, linewidth=2, title="Fib 0.382 Level")
+plot(fib236, color=color.green, linewidth=2, title="Fib 0.236 Level")
+plot(lowLevel, color=color.red, linewidth=2, title="Low Level")
+// ATR-based dynamic stop loss and take profit
+atr = atr(atrLength)
+longStopLoss = close - atr * stopLossMultiplier
+longTakeProfit = close + atr * takeProfitMultiplier
+shortStopLoss = close + atr * stopLossMultiplier
+shortTakeProfit = close - atr * takeProfitMultiplier
+
+// Trend filter using EMA
+trendFilter = ema(close, emaLength)
+
+// Strategy Entry and Exit Conditions
+longCondition = (crossover(close, fib618) or crossover(close, fib382)) and bullishVolumeTrend and close > trendFilter
+shortCondition = (crossunder(close, fib618) or crossunder(close, fib382)) and bearishVolumeTrend and close < trendFilter
+tradeSize = strategy.equity * leverage / close
+
+// Entering trades with dynamic stop loss and take profit
+if (longCondition and (inDateRange or timelock==0))
+    strategy.entry("Long", strategy.long, qty=tradeSize,stop=longStopLoss, limit=longTakeProfit)
+
+if (shortCondition and inDateRange)
+    strategy.entry("Short", strategy.short, qty=tradeSize,stop=shortStopLoss, limit=shortTakeProfit)
+profitMultiplier = input(8, title="Profit Target Multiplier")
+trailStop = atr * trailStopAtrMultiplier
+// Exiting trades
+strategy.exit("Trailing Stop", "Long", trail_points = trailStop, trail_offset = trailStop * 0.1)
+strategy.exit("Trailing Stop", "Short", trail_points = trailStop, trail_offset = trailStop * 0.1)
+
+// Adjusted exit conditions for higher frequency
+strategy.close("Long", when=(crossunder(close, fib236) or crossunder(close, fib382) or crossunder(close, fib500) or crossunder(close, fib618) or crossunder(close, fib786) or crossunder(close, fib1) or crossunder(close, fib1618) or crossunder(close, fib2618)) or (strategy.openprofit > atr * profitMultiplier))
+
+strategy.close("Short", when=(crossover(close, fib236) or crossover(close, fib382) or crossover(close, fib500) or crossover(close, fib618) or crossover(close, fib786) or crossover(close, fib1) or crossover(close, fib1618) or crossover(close, fib2618)) or (strategy.openprofit > atr * profitMultiplier))

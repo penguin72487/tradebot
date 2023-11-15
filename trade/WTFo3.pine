@@ -1,0 +1,51 @@
+//@version=4
+strategy("Optimized S&P 500 Long Term Fibonacci Strategy with Dynamic Leverage", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+// Strategy parameters
+fibStartLength = input(50, minval=1, title="Fibonacci Lookback Period Start") // Decreased for more frequent signals
+fibEndLength = input(20, minval=1, title="Fibonacci Lookback Period End") // Decreased for more frequent signals
+volMultiplier = input(1.0, title="Volume Multiplier for Entry") // Decreased to generate more signals
+riskPct = input(1, title="Risk Percentage for Stop Loss")
+atrLength = input(14, title="ATR Length for Stop Loss") // Typical for S&P 500
+maxLeverage = input(10, title="Max Leverage for S&P 500 Market") // More conservative leverage
+
+// Trend filters
+trendFilterPeriod = input(50, title="Trend Filter SMA Period") // Shorter SMA for trend filter
+longTrendFilter = sma(close, trendFilterPeriod) < close
+shortTrendFilter = sma(close, trendFilterPeriod) > close
+
+// Calculate ATR and risk management
+atr = atr(atrLength)
+historicalVolatility = sma(tr(true), 100) // A 100-day average of the true range as a proxy for historical volatility
+dynamicLeverage = min(maxLeverage, maxLeverage / (historicalVolatility / atr))
+riskPerTrade = strategy.equity * (riskPct / 100) * dynamicLeverage
+
+// Fibonacci levels calculations
+highLevel = highest(high, fibStartLength)
+lowLevel = lowest(low, fibEndLength)
+fibRange = highLevel - lowLevel
+fib618 = highLevel - fibRange * 0.618
+fib382 = highLevel - fibRange * 0.382
+fib236 = highLevel - fibRange * 0.236
+
+// Trading signals logic
+longCondition = crossover(close, fib236) and volume > sma(volume, fibStartLength) * volMultiplier and longTrendFilter
+shortCondition = crossunder(close, fib618) and volume > sma(volume, fibStartLength) * volMultiplier and shortTrendFilter
+
+// Entry strategy
+if (longCondition)
+    strategy.entry("Long", strategy.long, qty=riskPerTrade / atr)
+
+if (shortCondition)
+    strategy.entry("Short", strategy.short, qty=riskPerTrade / atr)
+
+// Trailing stop logic
+trailStopAtrMultiplier = input(3, title="Trailing Stop ATR Multiplier")
+trailStop = atr * trailStopAtrMultiplier
+
+strategy.exit("Trailing Stop", "Long", trail_points = trailStop, trail_offset = trailStop * 0.1)
+strategy.exit("Trailing Stop", "Short", trail_points = trailStop, trail_offset = trailStop * 0.1)
+
+// Exit conditions
+strategy.close("Long", when=crossunder(close, fib382) or (strategy.openprofit > atr * 6))
+strategy.close("Short", when=crossover(close, fib382) or (strategy.openprofit > atr * 6))

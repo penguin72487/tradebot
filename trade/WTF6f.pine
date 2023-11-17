@@ -1,8 +1,8 @@
 //@version=4
-strategy("WTF6", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=5, commission_type=strategy.commission.percent, commission_value=0.05)
-startYear = input(2022, "Start Year")
-startMonth = input(1, "Start Month")
-startDay = input(1, "Start Day")
+strategy("WTF6f", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=5, commission_type=strategy.commission.percent, commission_value=0.05,margin_long=0.04,margin_short=0.04)
+startYear = input(2023, "Start Year")
+startMonth = input(11, "Start Month")
+startDay = input(15, "Start Day")//50
 endYear = year(timenow)
 endMonth = month(timenow)
 endDay = dayofmonth(timenow)
@@ -21,23 +21,21 @@ leverage = input(1, title="Leverage")
 trailStopAtrMultiplier = input(0.5, title="Trailing Stop ATR Multiplier")
 forcestoppercent = input(0.5,title = "Force stop percent")
 qtycontrol = input(1,title = "init found control")
-atrFilter = input(100, title = "atr filter")
+atrFilter = input(80, title = "atr filter")
 
 // Adjusted trend filter for higher sensitivity
 emaFilterLength = input(25, title="EMA Trend Filter Length") // Shortened for quicker trend detection
-longTrendFilter = ema(close, emaFilterLength) < close
-shortTrendFilter = ema(close, emaFilterLength) > close
+longTrendFilter = ema(security(syminfo.tickerid, "15", close), emaFilterLength) < security(syminfo.tickerid, "15", close)
+shortTrendFilter = ema(security(syminfo.tickerid, "15", close), emaFilterLength) > security(syminfo.tickerid, "15", close)
 
-// Average volume calculation remains the same
-avgVol = sma(volume, fibStartLength)
-
-// ATR and risk management remains the same
-atr = atr(atrLength)
+avgVol = security(syminfo.tickerid, "15", sma(volume, fibStartLength))
+atr = security(syminfo.tickerid, "15", atr(atrLength))
 riskPerTrade = strategy.equity * (riskPct / 100) * leverage
 
+
 // Fibonacci channel high and low
-highLevel = highest(high, fibStartLength)
-lowLevel = lowest(low, fibEndLength)
+highLevel = security(syminfo.tickerid, "15", highest(high, fibStartLength))
+lowLevel = security(syminfo.tickerid, "15", lowest(low, fibEndLength))
 // Adjusted Fibonacci retracement levels for more frequent trades
 fibRange = highLevel - lowLevel
 fib786 = highLevel - fibRange * 0.786
@@ -88,8 +86,6 @@ strategy.exit("Trailing Stop", "Long", trail_points = trailStop, trail_offset = 
 strategy.exit("Trailing Stop", "Short", trail_points = trailStop, trail_offset = trailStop * 0.1)
 
 // Adjusted exit conditions for higher frequency
-if (ta.crossunder(close, fib236) or ta.crossunder(close, fib382) or ta.crossunder(close, fib500) or ta.crossunder(close, fib618) or ta.crossunder(close, fib786) or ta.crossunder(close, fib1) or ta.crossunder(close, fib1618) or ta.crossunder(close, fib2618) or (strategy.openprofit > atr * profitMultiplier))
-    strategy.close('Long')
+strategy.close("Long", when=(crossunder(close, fib236) or crossunder(close, fib382) or crossunder(close, fib500) or crossunder(close, fib618) or crossunder(close, fib786) or crossunder(close, fib1) or crossunder(close, fib1618) or crossunder(close, fib2618)) or (strategy.openprofit > atr * profitMultiplier))
 
-if (ta.crossover(close, fib236) or ta.crossover(close, fib382) or ta.crossover(close, fib500) or ta.crossover(close, fib618) or ta.crossover(close, fib786) or ta.crossover(close, fib1) or ta.crossover(close, fib1618) or ta.crossover(close, fib2618) or (strategy.openprofit > atr * profitMultiplier))
-    strategy.close('Short')
+strategy.close("Short", when=(crossover(close, fib236) or crossover(close, fib382) or crossover(close, fib500) or crossover(close, fib618) or crossover(close, fib786) or crossover(close, fib1) or crossover(close, fib1618) or crossover(close, fib2618)) or (strategy.openprofit > atr * profitMultiplier))

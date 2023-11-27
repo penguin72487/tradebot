@@ -96,7 +96,10 @@ initial_state(d_close) =>
 
 var pre_fibState = initial_state(close) // 0 0~0.236 1 0.236~0.382 2 0.382~0.5 3 0.5~0.618 4 0.618~0.786 5 0.786~1
 var pre_Volume = 0.0
+<<<<<<< HEAD
 
+=======
+>>>>>>> acddb17b916d5c84564103a07da772da3b5f913d
 
 next_fibStateV (d_close, pre_fibState) =>
     v_state = initial_state(d_close)
@@ -112,6 +115,7 @@ next_volumeVPercent (d_volume, pre_Volume) =>
     v_state
 
 pre_volumeVPercent = next_volumeVPercent(volume, pre_Volume)
+<<<<<<< HEAD
 //pre_Volume:=pre_Volume*pre_volumeVPercent
 
 // 確保在使用之前聲明並初始化 tradeqty
@@ -203,6 +207,17 @@ updateTrailingStop(trade_Status, fibState) =>
         strategy.exit('Trailing Stop', 'Short', stop=stopPrice)
     [highestPrice, lowestPrice, stopPrice ]
     
+=======
+pre_Volume:=pre_Volume*pre_volumeVPercent
+
+// 確保在使用之前聲明並初始化 tradeqty
+tradeqty = strategy.equity * 0.05 > 0 ? strategy.equity * 0.05 : 0
+
+var trade_Status = 0 // 0 沒開倉, 1 多倉, -1 空倉
+var tradeId = 0
+
+//我想要達到的效果是，trade_Status 來表示現在的開倉狀態，如果沒開倉，pre_fibStateV是正的，交易量大過某程度就開倉，並且紀錄現在的交易量，開倉的時候都會默認帶強制止損，如果現在是多倉狀態pre_fibStateV是正的，交易量大於之前開倉的時候就加倉，如果沒有加上追蹤止盈，追蹤止盈是只會一直跟蹤價格，直到價格突然回撤到某個程度就止盈，
+>>>>>>> acddb17b916d5c84564103a07da772da3b5f913d
 
 [fhighestPrice, flowestPrice, fstopPrice]= updateTrailingStop(trade_Status, pre_fibState)
 highestPrice := fhighestPrice
@@ -213,5 +228,51 @@ var line stopPriceLine = na
 if na(stopPriceLine) == false
     line.delete(stopPriceLine)
 
+<<<<<<< HEAD
 // 绘制新的止盈价格线
 stopPriceLine := line.new(bar_index, fstopPrice, bar_index - 1, fstopPrice, width=2, color=color.red)
+=======
+tradeLogic(trade_Status, pre_fibState, pre_Volume) =>
+    fpre_fibStateV = next_fibStateV(close, pre_fibState)
+    new_pre_fibState = pre_fibState + pre_fibStateV
+    fpre_volumeVPercent = next_volumeVPercent(volume, pre_Volume)
+    new_pre_Volume = pre_Volume * pre_volumeVPercent
+
+    new_trade_Status = trade_Status
+    new_tradeId = tradeId
+
+    if trade_Status == 0
+        if pre_fibStateV > 0 and volume > avgVol * volMultiplier
+            new_tradeId := tradeId + 1
+            new_trade_Status := 1
+            strategy.entry('Long', strategy.long, qty=tradeqty, comment='Long', stop=close*(1-forcestoppercent/100))
+        else if pre_fibStateV < 0 and volume > avgVol * volMultiplier
+            new_tradeId := tradeId + 1
+            new_trade_Status := -1
+            strategy.entry('Short', strategy.short, qty=tradeqty, comment='Short', stop=close*(1+forcestoppercent/100))
+
+    [new_trade_Status, new_pre_fibState, new_pre_Volume, new_tradeId]
+
+// 使用函數
+[ftrade_Status, fpre_fibState, fpre_Volume, ftradeId] = tradeLogic(trade_Status, pre_fibState, pre_Volume)
+trade_Status := ftrade_Status
+pre_fibState := fpre_fibState
+pre_Volume := fpre_Volume
+tradeId := ftradeId
+
+
+setStopLossAndTakeProfit(trade_Status) =>
+    if trade_Status == 1
+        // 為多頭設置止損和止盈
+        strategy.exit('Long Exit', 'Long', stop=close*(1-forcestoppercent/100), limit=close*(1+trailStopAtrMultiplier*atr))
+    else if trade_Status == -1
+        // 為空頭設置止損和止盈
+        strategy.exit('Short Exit', 'Short', stop=close*(1+forcestoppercent/100), limit=close*(1-trailStopAtrMultiplier*atr))
+    [fpre_Volume, ftrade_Status]
+// 使用止盈止損函數
+setStopLossAndTakeProfit(trade_Status)
+
+if strategy.position_size == 0
+    trade_Status := 0
+    pre_Volume := 0
+>>>>>>> acddb17b916d5c84564103a07da772da3b5f913d

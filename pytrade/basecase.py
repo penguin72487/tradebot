@@ -20,8 +20,9 @@ params = {
     'type':         'LIMIT',
     'timeInForce':  'GTC',
     'quantity':     '1.0000000',
-    'price':        '0.20',
-    'timestamp':    int(time.time() * 1000) # UNIX timestamp in milliseconds
+    'price':        '19000',
+    'timestamp':    int(time.time() * 1000),  # UNIX timestamp in milliseconds
+    'recvWindow':   5000  # Adding recvWindow parameter
 }
 
 # Create a query string

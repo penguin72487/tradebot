@@ -1,0 +1,1 @@
+g++ -std=c++11 -I"C:\gitproject\tradebot\jsoncpp\include" -I"C:\gitproject\tradebot\vcpkg\installed\x64-windows\include" -I"C:\gitproject\tradebot\binacpp\src" "C:\gitproject\tradebot\binacpp\src\*.cpp" -L"C:\gitproject\tradebot\jsoncpp\lib" -L"C:\gitproject\tradebot\vcpkg\installed\x64-windows\lib" -ljsoncpp -lcurl -o "C:\gitproject\tradebot\binacpp\binacpp.exe"

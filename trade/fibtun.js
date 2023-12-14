@@ -228,10 +228,6 @@ var line stopPriceLine = na
 if na(stopPriceLine) == false
     line.delete(stopPriceLine)
 
-<<<<<<< HEAD
-// 绘制新的止盈价格线
-stopPriceLine := line.new(bar_index, fstopPrice, bar_index - 1, fstopPrice, width=2, color=color.red)
-=======
 tradeLogic(trade_Status, pre_fibState, pre_Volume) =>
     fpre_fibStateV = next_fibStateV(close, pre_fibState)
     new_pre_fibState = pre_fibState + pre_fibStateV

@@ -1,0 +1,96 @@
+//@version=5
+strategy("Dynamic Fibonacci ex11 Grid Strategy", overlay=true)
+startYear = input(2022, 'Start Year')
+startMonth = input(1, 'Start Month')
+startDay = input(1, 'Start Day')
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+
+if(time < startTime or time > endTime)
+    strategy.close_all()
+    
+
+fibLookbackPeriod = input(59, title="Fibonacci Lookback Period") // Fibonacci 回看期
+percentOfEquity = input(10, title="Percent of Equity") / 100 // 使用总资金的百分比
+closeOffset = input(1, title="Close Offset") // 价格偏移
+
+// 设置Fibonacci层次
+fibLevels = array.new_float(11)
+array.set(fibLevels, 0, -4.0) // -400%
+array.set(fibLevels, 1, -2.618) // -261.8%
+array.set(fibLevels, 2, -1.618) // -161.8%
+array.set(fibLevels, 3, -1.0) // -100%
+array.set(fibLevels, 4, -0.618) // -61.8%
+array.set(fibLevels, 5, 0.0) // 0%
+array.set(fibLevels, 6, 0.618) // 61.8%
+array.set(fibLevels, 7, 1.0) // 100%
+array.set(fibLevels, 8, 1.618) // 161.8%
+array.set(fibLevels, 9, 2.618) // 261.8%
+array.set(fibLevels, 10, 4.0) // 400%
+
+
+// 更新高点和低点
+var float highLevel = na
+var float lowLevel = na
+var float fib_State = 12
+
+highLevel := ta.highest(high[closeOffset], fibLookbackPeriod)
+lowLevel := ta.lowest(low[closeOffset], fibLookbackPeriod)
+
+// 计算Fibonacci层次
+var float[] fibPoints = array.new_float(size=11)
+for i=0 to 10
+    fibPoint = lowLevel + (highLevel - lowLevel) * array.get(fibLevels, i)
+    array.set(fibPoints, i, fibPoint)
+
+// 绘制Fibonacci层次
+
+
+// plot(array.get(fibPoints, 0), color=color.aqua, title="Fibonacci -400%")
+// plot(array.get(fibPoints, 1), color=#6f6fff, title="Fibonacci -261.8%")
+// plot(array.get(fibPoints, 2), color=#adc3ff, title="Fibonacci -161.8%")
+plot(array.get(fibPoints, 3), color=color.fuchsia, title="Fibonacci -100%")
+plot(array.get(fibPoints, 4), color=color.green, title="Fibonacci -61.8%")
+plot(array.get(fibPoints, 5), color=color.red, title="Fibonacci 0%")
+plot(array.get(fibPoints, 6), color=color.lime, title="Fibonacci 61.8%")
+plot(array.get(fibPoints, 7), color=#ff6363, title="Fibonacci 100%")
+plot(array.get(fibPoints, 8), color=#9e9eff, title="Fibonacci 161.8%")
+// plot(array.get(fibPoints, 9), color=#ffff73, title="Fibonacci 261.8%")
+// plot(array.get(fibPoints, 10), color=#fd96fd, title="Fibonacci 400%")
+plot(fib_State, color=color.red, title="Fibonacci State")
+
+
+
+// 交易逻辑：当价格碰到通道的下边界时买入，碰到上边界时卖出
+var float fibnow = 0 
+for i=0 to 10
+    if close[closeOffset] <=array.get(fibPoints, i)
+        fibnow := i
+        break
+
+plot(fibnow, color=#e29292, title="Fibonacci Now")
+// 计算投资金额
+float investment = strategy.equity * percentOfEquity
+// 计算交易数量，这里简单地将投资金额除以当前价格
+float qty = investment / close[closeOffset]
+
+// if fib_State != fibnow
+//     if fib_State < fibnow
+//         strategy.entry("Short", strategy.short, qty=qty)
+//         fib_State := fibnow
+//     else 
+//         strategy.entry("Long", strategy.long, qty=qty)
+//         fib_State := fibnow
+
+if fibnow !=fib_State
+    if fibnow < fib_State+1
+        strategy.entry("Short", strategy.short, qty=qty)
+        // strategy.entry("Long", strategy.long, qty=qty)
+        fib_State := fibnow
+    else if fibnow > fib_State-1
+        strategy.entry("Long", strategy.long, qty=qty)
+        // strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow

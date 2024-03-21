@@ -1,0 +1,154 @@
+//@version=5
+strategy("Dynamic Fibonacci ex11 Grid Strategy", overlay=true,  pyramiding=6)
+startYear = input(2019, 'Start Year')
+startMonth = input(10, 'Start Month')
+startDay = input(1, 'Start Day')
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+
+var timelock = input(true, title = "Time Locked") // Change this line
+
+
+inDateRange = time >= startTime and time <= endTime
+inDateRange := inDateRange or (not timelock) // Use 'not timelock' for clarity
+
+
+
+fibLookbackPeriod = input(59, title="Fibonacci Lookback Period") // Fibonacci 回看期
+percentOfEquity = input(10, title="Percent of Equity") / 100 // 使用总资金的百分比
+closeOffset = input(1, title="Close Offset") // 价格偏移
+
+// 设置Fibonacci层次
+fibLevels = array.new_float(11)
+// -161.8% -100% -61.8% 0% 23.6% 38.2% 61.8% 78.6% 100% 161.8% 261.8%
+array.set(fibLevels, 0, -1.618)
+array.set(fibLevels, 1, -1)
+array.set(fibLevels, 2, -0.618)
+array.set(fibLevels, 3, 0)
+array.set(fibLevels, 4, 0.236)
+array.set(fibLevels, 5, 0.382)
+array.set(fibLevels, 6, 0.618)
+array.set(fibLevels, 7, 0.786)
+array.set(fibLevels, 8, 1)
+array.set(fibLevels, 9, 1.618)
+array.set(fibLevels, 10, 2.618)
+
+
+int max_Index = array.size(fibLevels) - 1
+
+
+
+// 更新高点和低点
+var float highLevel = na
+var float lowLevel = na
+var int fib_State = 6 //traded state
+var int longshorted = 0 // 1 for long, -1 for short
+
+highLevel := ta.highest(high[closeOffset], fibLookbackPeriod)
+lowLevel := ta.lowest(low[closeOffset], fibLookbackPeriod)
+
+// 计算Fibonacci层次
+var float[] fibPoints = array.new_float(max_Index+1)
+for i=0 to max_Index
+    fibPoint = lowLevel + (highLevel - lowLevel) * array.get(fibLevels, i)
+    array.set(fibPoints, i, fibPoint)
+
+// 绘制Fibonacci层次
+
+// plot(array.get(fibPoints, 10), color=#fd96fd, title="Fibonacci 10 261.8%")
+//// tunle 9
+plot(array.get(fibPoints, 9), color=#ffff73, title="Fibonacci 9 161.8%")
+//// tunle 8
+plot(array.get(fibPoints, 8), color=#9e9eff, title="Fibonacci 8 100%")
+//// tunle 7
+plot(array.get(fibPoints, 7), color=#ff6363, title="Fibonacci 7 78.6%")
+//// tunle 6
+plot(array.get(fibPoints, 6), color=color.lime, title="Fibonacci 6 61.8%")
+//// tunle 5
+plot(array.get(fibPoints, 5), color=color.red, title="Fibonacci 5 38.2%")
+//// tunle 4
+plot(array.get(fibPoints, 4), color=#deff65, title="Fibonacci 4 23.6%")
+//// tunle 3
+plot(array.get(fibPoints, 3), color=color.fuchsia, title="Fibonacci 3 0%")
+//// tunle 2
+// plot(array.get(fibPoints, 2), color=#adc3ff, title="Fibonacci 2 -61.8%")
+// // tunle 1
+// plot(array.get(fibPoints, 1), color=#6f6fff, title="Fibonacci 1 -100%")
+// // tunle 0
+// plot(array.get(fibPoints, 0), color=color.aqua, title="Fibonacci 0 -161.8%")
+
+plot(fib_State, color=color.red, title="Fibonacci State")
+
+
+
+// 交易逻辑：当价格碰到通道的下边界时买入，碰到上边界时卖出
+//建議 要把fibonacci價格線與通道分開，要先把價格分通道再根據是下跌過線還是上升過線再分別買賣
+var int fibnow = na
+for i=max_Index to 0
+    if close > array.get(fibPoints, i)
+        fibnow := i
+        break
+
+
+plot(fibnow, color=#e29292, title="Fibonacci Now")
+// 计算投资金额
+float investment = strategy.equity * percentOfEquity
+// 计算交易数量，这里简单地将投资金额除以当前价格
+float qty = investment / close
+
+// if(longshorted >= 0)
+//     if(fibnow>fib_State)
+//         // strategy.close("Long")
+//         strategy.entry("Short", strategy.short, qty=qty)
+//         fib_State := fibnow
+//         longshorted := -1
+//     else if(fibnow<fib_State-1)
+//         // strategy.close("Short")
+//         strategy.entry("Long", strategy.long, qty=qty)
+//         fib_State := fibnow+1
+//         longshorted := 1
+        
+
+// else if(longshorted <= 0)
+//     if(fibnow<fib_State-1)
+//         // strategy.close("Short")
+//         strategy.entry("Long", strategy.long, qty=qty)
+//         fib_State := fibnow+1
+//         longshorted := 1
+//     else if(fibnow>fib_State)
+//         // strategy.close("Long")
+//         strategy.entry("Short", strategy.short, qty=qty)
+//         fib_State := fibnow
+//         longshorted := -1
+
+// reverse
+if(longshorted >= 0)
+    if(fibnow>fib_State)
+        // strategy.close("Long")
+        strategy.entry("Long", strategy.long, qty=qty)
+
+        fib_State := fibnow
+        longshorted := -1
+    else if(fibnow<fib_State-1)
+        // strategy.close("Short")
+        strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow+1
+        longshorted := 1
+        
+
+else if(longshorted <= 0)
+    if(fibnow<fib_State-1)
+        // strategy.close("Short")
+        
+        strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow+1
+        longshorted := 1
+    else if(fibnow>fib_State)
+        // strategy.close("Long")
+        strategy.entry("Long", strategy.long, qty=qty)
+        
+        fib_State := fibnow
+        longshorted := -1

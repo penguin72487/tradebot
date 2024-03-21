@@ -115,5 +115,6 @@
       "spanstream": "cpp",
       "stacktrace": "cpp",
       "syncstream": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "C:/gitproject/tradebot/jsoncpp"
   }

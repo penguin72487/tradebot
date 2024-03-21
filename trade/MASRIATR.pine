@@ -1,0 +1,40 @@
+//@version=5
+indicator("MA + RSI + ATR Strategy", overlay=true)
+
+// 參數定義
+shortTermLength = input(5, "Short-Term MA Length")
+longTermLength = input(10, "Long-Term MA Length")
+rsiLength = input(14, "RSI Length")
+rsiOverbought = input(70, "RSI Overbought Level")
+rsiOversold = input(30, "RSI Oversold Level")
+atrLength = input(14, "ATR Length")
+atrMultiplier = input(1.5, "ATR Multiplier for Stop Loss")
+
+// 指標計算
+shortTermMA = ta.sma(close, shortTermLength)
+longTermMA = ta.sma(close, longTermLength)
+rsi = ta.rsi(close, rsiLength)
+atr = ta.atr(atrLength)
+
+// 繪製移動平均線
+plot(shortTermMA, color=color.red)
+plot(longTermMA, color=color.blue)
+
+// 生成交易信號
+longSignal = (shortTermMA>longTermMA) and rsi < rsiOversold
+shortSignal = (shortTermMA< longTermMA) and rsi > rsiOverbought
+
+// 繪製入場信號
+
+
+// 止損點計算示例（假設進場點為當前價格）
+longStopLoss = close - atr * atrMultiplier
+shortStopLoss = close + atr * atrMultiplier
+
+if (longSignal)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Stop Loss", "Long", stop=longStopLoss)
+if (shortSignal)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Stop Loss", "Short", stop=shortStopLoss)
+

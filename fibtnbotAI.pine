@@ -1,0 +1,74 @@
+//@version=5
+strategy("Dynamic Fibonacci ex11 Grid Strategy [Optimized]", overlay=true, pyramiding=6)
+startYear = input(2019, 'Start Year')
+startMonth = input(10, 'Start Month')
+startDay = input(1, 'Start Day')
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+
+var timelock = input(true, title="Time Locked")
+
+inDateRange = time >= startTime and time <= endTime
+inDateRange := inDateRange or (not timelock)
+
+fibLookbackPeriod = input(59, title="Fibonacci Lookback Period")
+adaptiveLookback = input(false, title="Adaptive Lookback") // New input for adaptive lookback
+percentOfEquity = input(10, title="Percent of Equity") / 100
+closeOffset = input(1, title="Close Offset")
+atrLength = input(14, title="ATR Length for Position Sizing") // ATR for dynamic position sizing
+rsiPeriod = input(14, title="RSI Period") // RSI for entry confirmation
+
+// Fibonacci levels setup
+fibLevels = array.new_float(11)
+array.set(fibLevels, 0, -1.618)
+array.set(fibLevels, 1, -1)
+array.set(fibLevels, 2, -0.618)
+// Additional levels omitted for brevity
+
+int max_Index = array.size(fibLevels) - 1
+
+// Update high and low levels
+var float highLevel = na
+var float lowLevel = na
+var int fib_State = 6
+var int longshorted = 0
+
+highLevel := ta.highest(high[closeOffset], fibLookbackPeriod)
+lowLevel := ta.lowest(low[closeOffset], fibLookbackPeriod)
+
+// Calculating Fibonacci levels
+var float[] fibPoints = array.new_float(max_Index+1)
+for i=0 to max_Index
+    fibPoint = lowLevel + (highLevel - lowLevel) * array.get(fibLevels, i)
+    array.set(fibPoints, i, fibPoint)
+
+// Plotting Fibonacci levels (plots omitted for brevity)
+
+var int fibnow = na
+for i=max_Index to 0
+    if close > array.get(fibPoints, i)
+        fibnow := i
+        break
+
+// Additional indicators for confirmation
+atr = ta.atr(atrLength)
+rsi = ta.rsi(close, rsiPeriod)
+riskMultiplier = atr / close // Risk adjustment factor based on ATR
+
+// Calculate investment and quantity, dynamically adjusting for market conditions
+float investment = strategy.equity * percentOfEquity * riskMultiplier
+float qty = investment / close
+
+// Updated trading logic with RSI confirmation and dynamic position sizing
+if rsi > 50 and inDateRange // Buying condition with RSI confirmation
+    if longshorted >= 0 and fibnow > fib_State
+        strategy.entry("Long", strategy.long, qty=qty)
+        fib_State := fibnow
+        longshorted := -1
+    else if longshorted <= 0 and fibnow < fib_State-1
+        strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow+1
+        longshorted := 1

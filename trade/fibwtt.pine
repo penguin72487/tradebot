@@ -1,0 +1,235 @@
+//@version=5
+strategy("Dynamic Fibonacci ex11 Grid Strategy", overlay=true,  pyramiding=6)
+// inputs
+showVolume = input.bool(true, 'Show Volume Bars', group='Volume Bars')
+showColor = input.bool(true, 'Coloring Volume Bars', group='Volume Bars')
+
+showTrend = input.bool(true, 'Show Volume Trend', group='Volume Trend')
+trend_ma_length = input.int(5, 'Volume Trend SMA length', group='Volume Trend')
+
+strong_volume_weighting_factor = input.float(0.8, 'Strong volume weighting factor', minval=0.0, maxval=1.0, step=0.1, group='Volume Trend weighting factor')
+weak_volume_weighting_factor = input.float(0.4, 'Weak volume weighting factor', minval=0.0, maxval=1.0, step=0.1, group='Volume Trend weighting factor')
+neutral_volume_weighting_factor = 1
+
+// candlestick pattern variables
+C_Len = 10  // ema depth for bodyAvg
+C_ShadowPercent = 5.0  // size of shadows
+C_ShadowEqualsPercent = 100.0
+C_DojiBodyPercent = 8.5
+C_Factor = 2.0  // shows the number of times the shadow dominates the candlestick body
+
+C_BodyHi = math.max(close, open)
+C_BodyLo = math.min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ta.ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body
+C_WhiteBody = open < close
+C_BlackBody = open > close
+C_Range = high - low
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo
+C_BodyMiddle = C_Body / 2 + C_BodyLo
+C_ShadowEquals = C_UpShadow == C_DnShadow or math.abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100 < C_ShadowEqualsPercent and math.abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100 < C_ShadowEqualsPercent
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100
+C_Doji = C_IsDojiBody and C_ShadowEquals
+
+
+
+// candlestick pattern recognition
+
+// Neutral Doji
+C_DragonflyDoji = C_IsDojiBody and C_UpShadow <= C_Body
+C_GravestoneDojiOne = C_IsDojiBody and C_DnShadow <= C_Body
+is_Doji = C_Doji and not C_DragonflyDoji and not C_GravestoneDojiOne
+
+// LongLowerShadowInput
+C_LongLowerShadowPercent = 55.0
+C_LongLowerShadowBullish = C_DnShadow > C_Range / 100 * C_LongLowerShadowPercent
+
+// LongUpperShadowInput
+C_LongShadowPercent = 55.0
+C_LongUpperShadowBearish = C_UpShadow > C_Range / 100 * C_LongShadowPercent
+
+// Bullish
+is_Bullish_strong = C_WhiteBody and (C_LongLowerShadowBullish or C_LongBody)
+is_Bullish_weak = C_LongLowerShadowBullish or C_WhiteBody and (C_Body >= 0.45 * C_UpShadow or C_Body <= 0.55 * C_UpShadow)
+// Bearish
+is_Bearish_strong = C_BlackBody and (C_LongUpperShadowBearish or C_LongBody)
+is_Bearish_weak = C_LongUpperShadowBearish or C_BlackBody and (C_Body >= 0.45 * C_UpShadow or C_Body <= 0.55 * C_UpShadow)
+
+
+// calculate weighting volume
+iff_1 = is_Bearish_weak ? 1 - weak_volume_weighting_factor : neutral_volume_weighting_factor
+iff_2 = is_Bullish_weak ? 1 + weak_volume_weighting_factor : iff_1
+iff_3 = is_Bearish_strong ? 1 - strong_volume_weighting_factor : iff_2
+iff_4 = is_Bullish_strong ? 1 + strong_volume_weighting_factor : iff_3
+weight_bullish = is_Doji ? neutral_volume_weighting_factor : iff_4
+
+iff_5 = is_Bearish_weak ? 1 + weak_volume_weighting_factor : neutral_volume_weighting_factor
+iff_6 = is_Bullish_weak ? 1 - weak_volume_weighting_factor : iff_5
+iff_7 = is_Bearish_strong ? 1 + strong_volume_weighting_factor : iff_6
+iff_8 = is_Bullish_strong ? 1 - strong_volume_weighting_factor : iff_7
+weight_bearish = is_Doji ? neutral_volume_weighting_factor : iff_8
+
+volume_bullish = volume * weight_bullish
+volume_bearish = volume * weight_bearish
+
+bullish_sma = showTrend ? ta.sma(volume_bullish, trend_ma_length) : na
+bearish_sma = showTrend ? ta.sma(volume_bearish, trend_ma_length) : na
+
+// // plot
+// blue = color.blue
+// green = color.green
+// red = color.red
+// light_green = #afd4ab
+// light_red = #e39e9c
+// neutral = color.gray
+
+// iff_9 = is_Bearish_weak ? light_red : neutral
+// iff_10 = is_Bullish_weak ? light_green : iff_9
+// iff_11 = is_Bearish_strong ? red : iff_10
+// iff_12 = is_Bullish_strong ? green : iff_11
+// palette = is_Doji ? blue : iff_12
+
+// original_color = close > open ? green : red
+
+// // plot volume bars
+// // 绘制成交量柱，透明度调整
+// volumeColor = showColor ? palette : original_color
+// plotVolumeColor = showColor ? color.new(volumeColor, 10) : color.new(original_color, 35)
+// plot(showVolume ? volume : na, title='Volume', color=plotVolumeColor, style=plot.style_columns)
+
+// // 绘制成交量趋势SMA，已正确使用color.new()
+// p1 = plot(bullish_sma, title='Bullish Volume Trend', linewidth=2, color=color.new(green, 0))
+// p2 = plot(bearish_sma, title='Bearish Volume Trend', linewidth=2, color=color.new(red, 0))
+
+// // 填充区域，透明度使用color.new()调整
+// fillColor = bullish_sma > bearish_sma ? color.new(green, 75) : color.new(red, 75)
+// fill(p1, p2, color=fillColor)
+
+// // 突出显示大成交量，透明度使用color.new()调整
+// is_large_volume = volume > 2.25 * ta.ema(volume, 14)
+// highlightColor = is_large_volume ? color.new(palette, 90) : na
+// bgcolor(highlightColor, title='Highlight Large Volume')
+
+startYear = input(2019, 'Start Year')
+startMonth = input(10, 'Start Month')
+startDay = input(1, 'Start Day')
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+
+var timelock = input(true, title = "Time Locked") // Change this line
+
+
+inDateRange = time >= startTime and time <= endTime
+inDateRange := inDateRange or (not timelock) // Use 'not timelock' for clarity
+
+
+
+fibLookbackPeriod = input(61, title="Fibonacci Lookback Period") // Fibonacci 回看期
+percentOfEquity = input(20, title="Percent of Equity") / 100 // 使用总资金的百分比
+closeOffset = input(1, title="Close Offset") // 价格偏移
+
+// 设置Fibonacci层次
+fibLevels = array.new_float(11)
+// -161.8% -100% -61.8% 0% 23.6% 38.2% 61.8% 78.6% 100% 161.8% 261.8%
+array.set(fibLevels, 0, -1.618)
+array.set(fibLevels, 1, -1)
+array.set(fibLevels, 2, -0.618)
+array.set(fibLevels, 3, 0)
+array.set(fibLevels, 4, 0.236)
+array.set(fibLevels, 5, 0.382)
+array.set(fibLevels, 6, 0.618)
+array.set(fibLevels, 7, 0.786)
+array.set(fibLevels, 8, 1)
+array.set(fibLevels, 9, 1.618)
+array.set(fibLevels, 10, 2.618)
+
+
+int max_Index = array.size(fibLevels) - 1
+
+
+
+// 更新高点和低点
+var float highLevel = na
+var float lowLevel = na
+var int fib_State = 6 //traded state
+var int longshorted = 0 // 1 for long, -1 for short
+
+highLevel := ta.highest(high[closeOffset], fibLookbackPeriod)
+lowLevel := ta.lowest(low[closeOffset], fibLookbackPeriod)
+
+// 计算Fibonacci层次
+var float[] fibPoints = array.new_float(max_Index+1)
+for i=0 to max_Index
+    fibPoint = lowLevel + (highLevel - lowLevel) * array.get(fibLevels, i)
+    array.set(fibPoints, i, fibPoint)
+
+// 绘制Fibonacci层次
+
+// plot(array.get(fibPoints, 10), color=#fd96fd, title="Fibonacci 10 261.8%")
+//// tunle 9
+plot(array.get(fibPoints, 9), color=#ffff73, title="Fibonacci 9 161.8%")
+//// tunle 8
+plot(array.get(fibPoints, 8), color=#9e9eff, title="Fibonacci 8 100%")
+//// tunle 7
+plot(array.get(fibPoints, 7), color=#ff6363, title="Fibonacci 7 78.6%")
+//// tunle 6
+plot(array.get(fibPoints, 6), color=color.lime, title="Fibonacci 6 61.8%")
+//// tunle 5
+plot(array.get(fibPoints, 5), color=color.red, title="Fibonacci 5 38.2%")
+//// tunle 4
+plot(array.get(fibPoints, 4), color=#deff65, title="Fibonacci 4 23.6%")
+//// tunle 3
+plot(array.get(fibPoints, 3), color=color.fuchsia, title="Fibonacci 3 0%")
+//// tunle 2
+// plot(array.get(fibPoints, 2), color=#adc3ff, title="Fibonacci 2 -61.8%")
+// // tunle 1
+// plot(array.get(fibPoints, 1), color=#6f6fff, title="Fibonacci 1 -100%")
+// // tunle 0
+// plot(array.get(fibPoints, 0), color=color.aqua, title="Fibonacci 0 -161.8%")
+
+plot(fib_State, color=color.red, title="Fibonacci State")
+
+
+
+// 交易逻辑：当价格碰到通道的下边界时买入，碰到上边界时卖出
+//建議 要把fibonacci價格線與通道分開，要先把價格分通道再根據是下跌過線還是上升過線再分別買賣
+var int fibnow = na
+for i=max_Index to 0
+    if close > array.get(fibPoints, i)
+        fibnow := i
+        break
+
+
+plot(fibnow, color=#e29292, title="Fibonacci Now")
+// 计算投资金额
+float investment = strategy.equity * percentOfEquity
+// 计算交易数量，这里简单地将投资金额除以当前价格
+float qty = investment / close
+
+if (longshorted >= 0)
+    if (fibnow > fib_State and bullish_sma > bearish_sma)
+        strategy.entry("Long", strategy.long, qty=qty)
+        fib_State := fibnow
+        longshorted := -1
+    else if (fibnow < fib_State - 1 and bearish_sma > bullish_sma)
+        strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow + 1
+        longshorted := 1
+else if (longshorted <= 0)
+    if (fibnow < fib_State - 1 and bearish_sma > bullish_sma)
+        strategy.entry("Short", strategy.short, qty=qty)
+        fib_State := fibnow + 1
+        longshorted := 1
+    else if (fibnow > fib_State and bullish_sma > bearish_sma)
+        strategy.entry("Long", strategy.long, qty=qty)
+        fib_State := fibnow
+        longshorted := -1

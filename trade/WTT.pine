@@ -1,0 +1,149 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © M0rty
+
+//@version=4
+
+////////////////////////////////////////////////////////////////
+// 
+// WTT Volume Trend by Morty
+//
+// Inspired by Natural Trading Theory
+//
+//--------------------------------------------------------------
+// Version 1.1, Updated at 20210409
+//
+// Add feature:
+// - Highlight large volume
+//
+//--------------------------------------------------------------
+// Version 1.0, Updated at 20210327
+//
+// Features: 
+// - Colored volume bars (Optional)
+// - Weighted Bullish volume SMA trend lines according to candlestick pattern
+// - Weighted Bearish volume SMA trend lines according to candlestick pattern
+// - Adjustable volume SMA length
+// - Adjustable weighting factors
+// - Filling the background between volume SMA trend lines
+//
+////////////////////////////////////////////////////////////////
+
+study(title="WTT Volume Trend [Morty]", shorttitle="Vol Trend [Morty]", format=format.volume, resolution="")
+
+
+// inputs
+showVolume = input(true, "Show Volume Bars", group="Volume Bars")
+showColor = input(true, "Coloring Volume Bars", group="Volume Bars")
+
+showTrend = input(true, "Show Volume Trend", group="Volume Trend")
+trend_ma_length = input(5, "Volume Trend SMA length", type=input.integer, group="Volume Trend")
+
+strong_volume_weighting_factor = input(0.8, "Strong volume weighting factor", type=input.float, minval=0.0, maxval=1.0,step=0.1, group="Volume Trend weighting factor")
+weak_volume_weighting_factor = input(0.4, "Weak volume weighting factor", type=input.float, minval=0.0, maxval=1.0,step=0.1, group="Volume Trend weighting factor")
+neutral_volume_weighting_factor = 1
+
+// candlestick pattern variables
+C_Len = 10 // ema depth for bodyAvg
+C_ShadowPercent = 5.0 // size of shadows
+C_ShadowEqualsPercent = 100.0
+C_DojiBodyPercent = 8.5
+C_Factor = 2.0 // shows the number of times the shadow dominates the candlestick body
+
+C_BodyHi = max(close, open)
+C_BodyLo = min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body
+C_WhiteBody = open < close
+C_BlackBody = open > close
+C_Range = high-low
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo
+C_BodyMiddle = C_Body / 2 + C_BodyLo
+C_ShadowEquals = C_UpShadow == C_DnShadow or (abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100) < C_ShadowEqualsPercent and (abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100) < C_ShadowEqualsPercent
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100
+C_Doji = C_IsDojiBody and C_ShadowEquals
+
+
+
+// candlestick pattern recognition
+
+// Neutral Doji
+C_DragonflyDoji = C_IsDojiBody and C_UpShadow <= C_Body
+C_GravestoneDojiOne = C_IsDojiBody and C_DnShadow <= C_Body
+is_Doji = C_Doji and not C_DragonflyDoji and not C_GravestoneDojiOne
+
+// LongLowerShadowInput
+C_LongLowerShadowPercent = 55.0
+C_LongLowerShadowBullish = C_DnShadow > C_Range/100*C_LongLowerShadowPercent
+
+// LongUpperShadowInput
+C_LongShadowPercent = 55.0
+C_LongUpperShadowBearish = C_UpShadow > C_Range/100*C_LongShadowPercent
+
+// Bullish
+is_Bullish_strong = C_WhiteBody and (C_LongLowerShadowBullish or C_LongBody)
+is_Bullish_weak = C_LongLowerShadowBullish or (C_WhiteBody and (C_Body>=0.45*C_UpShadow or C_Body<=0.55*C_UpShadow))
+// Bearish
+is_Bearish_strong = C_BlackBody and (C_LongUpperShadowBearish or C_LongBody)
+is_Bearish_weak = C_LongUpperShadowBearish or (C_BlackBody and (C_Body>=0.45*C_UpShadow or C_Body<=0.55*C_UpShadow))
+
+
+// calculate weighting volume
+weight_bullish = iff(is_Doji, neutral_volume_weighting_factor,
+     iff(is_Bullish_strong, 1+strong_volume_weighting_factor,
+     iff(is_Bearish_strong, 1-strong_volume_weighting_factor,
+     iff(is_Bullish_weak, 1+weak_volume_weighting_factor,
+     iff(is_Bearish_weak, 1-weak_volume_weighting_factor,
+     neutral_volume_weighting_factor)))))
+
+weight_bearish = iff(is_Doji, neutral_volume_weighting_factor,
+     iff(is_Bullish_strong, 1-strong_volume_weighting_factor,
+     iff(is_Bearish_strong, 1+strong_volume_weighting_factor,
+     iff(is_Bullish_weak, 1-weak_volume_weighting_factor,
+     iff(is_Bearish_weak, 1+weak_volume_weighting_factor,
+     neutral_volume_weighting_factor)))))
+
+volume_bullish = volume * weight_bullish
+volume_bearish = volume * weight_bearish
+
+bullish_sma = showTrend ? sma(volume_bullish, trend_ma_length) : na
+bearish_sma = showTrend ? sma(volume_bearish, trend_ma_length) : na
+
+// plot
+blue = color.blue
+green = color.green
+red = color.red
+light_green = #afd4ab
+light_red = #e39e9c
+neutral = color.gray
+
+palette = iff(is_Doji, blue,
+     iff(is_Bullish_strong, green,
+     iff(is_Bearish_strong, red,
+     iff(is_Bullish_weak, light_green,
+     iff(is_Bearish_weak, light_red,
+     neutral)))))
+
+original_color = close>open?green:red
+
+// plot volume bars
+plot(showVolume? volume : na, title='volume', color=showColor?palette:original_color,
+     style=plot.style_columns, transp=showColor?10:35)
+
+// plot volume trend SMA
+p1 = plot(bullish_sma, title="Bullish Volume Trend", 
+     linewidth=2, color=green, transp=0)
+p2 = plot(bearish_sma, title="Bearish Volume Trend",
+     linewidth=2, color=red,   transp=0)
+
+// fill area between volume trend
+fill(p1, p2, color=bullish_sma>bearish_sma?green:red, transp=75)
+
+// add bgcolor to highlight large volume
+is_large_volume = volume > 2.25 * ema(volume, 14)
+bgcolor(is_large_volume?palette:na, transp=90, title='Highlight large volume')

@@ -1,0 +1,110 @@
+//@version=5
+strategy("WTTSMAL", overlay=true,  pyramiding=10, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+// inputs
+showVolume = input.bool(true, 'Show Volume Bars', group='Volume Bars')
+showColor = input.bool(true, 'Coloring Volume Bars', group='Volume Bars')
+
+showTrend = input.bool(true, 'Show Volume Trend', group='Volume Trend')
+trend_ma_length = input.int(5, 'Volume Trend SMA length', group='Volume Trend')
+
+strong_volume_weighting_factor = input.float(0.8, 'Strong volume weighting factor', minval=0.0, maxval=1.0, step=0.1, group='Volume Trend weighting factor')
+weak_volume_weighting_factor = input.float(0.4, 'Weak volume weighting factor', minval=0.0, maxval=1.0, step=0.1, group='Volume Trend weighting factor')
+neutral_volume_weighting_factor = 1
+
+// candlestick pattern variables
+C_Len = 10  // ema depth for bodyAvg
+C_ShadowPercent = 5.0  // size of shadows
+C_ShadowEqualsPercent = 100.0
+C_DojiBodyPercent = 8.5
+C_Factor = 2.0  // shows the number of times the shadow dominates the candlestick body
+
+C_BodyHi = math.max(close, open)
+C_BodyLo = math.min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ta.ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body
+C_WhiteBody = open < close
+C_BlackBody = open > close
+C_Range = high - low
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo
+C_BodyMiddle = C_Body / 2 + C_BodyLo
+C_ShadowEquals = C_UpShadow == C_DnShadow or math.abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100 < C_ShadowEqualsPercent and math.abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100 < C_ShadowEqualsPercent
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100
+C_Doji = C_IsDojiBody and C_ShadowEquals
+
+
+
+// candlestick pattern recognition
+
+// Neutral Doji
+C_DragonflyDoji = C_IsDojiBody and C_UpShadow <= C_Body
+C_GravestoneDojiOne = C_IsDojiBody and C_DnShadow <= C_Body
+is_Doji = C_Doji and not C_DragonflyDoji and not C_GravestoneDojiOne
+
+// LongLowerShadowInput
+C_LongLowerShadowPercent = 55.0
+C_LongLowerShadowBullish = C_DnShadow > C_Range / 100 * C_LongLowerShadowPercent
+
+// LongUpperShadowInput
+C_LongShadowPercent = 55.0
+C_LongUpperShadowBearish = C_UpShadow > C_Range / 100 * C_LongShadowPercent
+
+// Bullish
+is_Bullish_strong = C_WhiteBody and (C_LongLowerShadowBullish or C_LongBody)
+is_Bullish_weak = C_LongLowerShadowBullish or C_WhiteBody and (C_Body >= 0.45 * C_UpShadow or C_Body <= 0.55 * C_UpShadow)
+// Bearish
+is_Bearish_strong = C_BlackBody and (C_LongUpperShadowBearish or C_LongBody)
+is_Bearish_weak = C_LongUpperShadowBearish or C_BlackBody and (C_Body >= 0.45 * C_UpShadow or C_Body <= 0.55 * C_UpShadow)
+
+
+// calculate weighting volume
+iff_1 = is_Bearish_weak ? 1 - weak_volume_weighting_factor : neutral_volume_weighting_factor
+iff_2 = is_Bullish_weak ? 1 + weak_volume_weighting_factor : iff_1
+iff_3 = is_Bearish_strong ? 1 - strong_volume_weighting_factor : iff_2
+iff_4 = is_Bullish_strong ? 1 + strong_volume_weighting_factor : iff_3
+weight_bullish = is_Doji ? neutral_volume_weighting_factor : iff_4
+
+iff_5 = is_Bearish_weak ? 1 + weak_volume_weighting_factor : neutral_volume_weighting_factor
+iff_6 = is_Bullish_weak ? 1 - weak_volume_weighting_factor : iff_5
+iff_7 = is_Bearish_strong ? 1 + strong_volume_weighting_factor : iff_6
+iff_8 = is_Bullish_strong ? 1 - strong_volume_weighting_factor : iff_7
+weight_bearish = is_Doji ? neutral_volume_weighting_factor : iff_8
+
+volume_bullish = volume * weight_bullish
+volume_bearish = volume * weight_bearish
+
+bullish_sma = showTrend ? ta.sma(volume_bullish, trend_ma_length) : na
+bearish_sma = showTrend ? ta.sma(volume_bearish, trend_ma_length) : na
+
+// 判断SMA交叉点
+bullish_Condition = bullish_sma > bearish_sma and volume_bullish > bullish_sma
+closeLong_Condition = bearish_sma > bullish_sma
+long_Qty = strategy.equity * (volume_bullish/bullish_sma) / close
+long_Qty := long_Qty > 0 ? long_Qty : 1
+long_Qty := long_Qty > 1000000000000 ? 1000000000000 : long_Qty
+
+// 生成买卖信号
+if bullish_Condition
+    strategy.entry("Long", strategy.long, qty=long_Qty)
+
+if closeLong_Condition
+    strategy.close("Long")
+
+
+bearish_Condition = bearish_sma > bullish_sma and volume_bearish > bearish_sma
+closeShort_Condition = bullish_sma > bearish_sma
+short_Qty = strategy.equity * (volume_bearish/bearish_sma) / close
+short_Qty := short_Qty > 0 ? short_Qty : 1
+short_Qty := short_Qty > 1000000000000 ? 1000000000000 : short_Qty
+
+if bearish_Condition
+    strategy.entry("Short", strategy.short, qty=short_Qty)
+
+if closeShort_Condition
+    strategy.close("Short")

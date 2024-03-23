@@ -1,5 +1,5 @@
 //@version=5
-strategy("WTTSMAL", overlay=true,  pyramiding=10, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+strategy("WTTSMAL", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
 
 // inputs
 showVolume = input.bool(true, 'Show Volume Bars', group='Volume Bars')
@@ -82,20 +82,24 @@ volume_bearish = volume * weight_bearish
 bullish_sma = showTrend ? ta.sma(volume_bullish, trend_ma_length) : na
 bearish_sma = showTrend ? ta.sma(volume_bearish, trend_ma_length) : na
 
+
+// plot(showVolume ? volume : na, color=showColor ? (close > open ? color.green : color.red) : color.gray, style=plot.style_columns, title="Volume Bars")
+// plot(showVolume ? bullish_sma : na, color=color.green, linewidth=2, title="Bullish SMA")
+// plot(showVolume ? bearish_sma : na, color=color.red, linewidth=2, title="Bearish SMA")
+// plot(showVolume ? volume_bullish : na, color=color.green, linewidth=2, title="Bullish Volume")
+// plot(showVolume ? volume_bearish : na, color=color.red, linewidth=2, title="Bearish Volume")
+
+
+smafilter = input(5.0, title="SMA Filter")
+
 // 判断SMA交叉点
-bullish_Condition = bullish_sma > bearish_sma and volume_bullish > bullish_sma
+bullish_Condition = bullish_sma > bearish_sma*(1+smafilter/100) and volume > bullish_sma
 closeLong_Condition = bearish_sma > bullish_sma
 long_Qty = strategy.equity * (volume_bullish/bullish_sma) / close
 long_Qty := long_Qty > 0 ? long_Qty : 1
 long_Qty := long_Qty > 1000000000000 ? 1000000000000 : long_Qty
 
 // 生成买卖信号
-if bullish_Condition
-    strategy.entry("Long", strategy.long, qty=long_Qty)
-
-if closeLong_Condition
-    strategy.close("Long")
-
 
 bearish_Condition = bearish_sma > bullish_sma and volume_bearish > bearish_sma
 closeShort_Condition = bullish_sma > bearish_sma
@@ -103,8 +107,37 @@ short_Qty = strategy.equity * (volume_bearish/bearish_sma) / close
 short_Qty := short_Qty > 0 ? short_Qty : 1
 short_Qty := short_Qty > 1000000000000 ? 1000000000000 : short_Qty
 
+
+// 假设信号强度基于距离SMA的距离计算
+signal_strength_bullish = (volume_bullish - bullish_sma) / bullish_sma
+signal_strength_bearish = (volume_bearish - bearish_sma) / bearish_sma
+
+// 根据信号强度动态调整仓位大小
+long_Qty_adjusted = long_Qty * math.min(1.5, math.max(0.5, signal_strength_bullish))
+short_Qty_adjusted = short_Qty * math.min(1.5, math.max(0.5, signal_strength_bearish))
+
+// 使用调整后的仓位大小进行交易
+if bullish_Condition
+    strategy.entry("Long", strategy.long, qty=long_Qty_adjusted)
+
+if closeLong_Condition
+    strategy.close("Long")
+
 if bearish_Condition
-    strategy.entry("Short", strategy.short, qty=short_Qty)
+    strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
 
 if closeShort_Condition
     strategy.close("Short")
+
+
+// 设置止损和止盈点
+// stop_loss_percentage = input.float(2.0, "Stop Loss (%)", group="Risk Management")
+// take_profit_percentage = input.float(4.0, "Take Profit (%)", group="Risk Management")
+
+// strategy.exit("Stop Loss", from_entry="Long", loss=stop_loss_percentage)
+// strategy.exit("Take Profit", from_entry="Long", profit=take_profit_percentage)
+
+// strategy.exit("Stop Loss", from_entry="Short", loss=stop_loss_percentage)
+// strategy.exit("Take Profit", from_entry="Short", profit=take_profit_percentage)
+
+

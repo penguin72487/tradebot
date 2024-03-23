@@ -1,5 +1,18 @@
 //@version=5
-strategy("WTTSMAL", overlay=true,  pyramiding=10, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+strategy("WTTSMAL", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
 // inputs
 showVolume = input.bool(true, 'Show Volume Bars', group='Volume Bars')
@@ -90,12 +103,6 @@ long_Qty := long_Qty > 0 ? long_Qty : 1
 long_Qty := long_Qty > 1000000000000 ? 1000000000000 : long_Qty
 
 // 生成买卖信号
-if bullish_Condition
-    strategy.entry("Long", strategy.long, qty=long_Qty)
-
-if closeLong_Condition
-    strategy.close("Long")
-
 
 bearish_Condition = bearish_sma > bullish_sma and volume_bearish > bearish_sma
 closeShort_Condition = bullish_sma > bearish_sma
@@ -103,8 +110,31 @@ short_Qty = strategy.equity * (volume_bearish/bearish_sma) / close
 short_Qty := short_Qty > 0 ? short_Qty : 1
 short_Qty := short_Qty > 1000000000000 ? 1000000000000 : short_Qty
 
-if bearish_Condition
-    strategy.entry("Short", strategy.short, qty=short_Qty)
 
-if closeShort_Condition
-    strategy.close("Short")
+// 假设信号强度基于距离SMA的距离计算
+signal_strength_bullish = (volume_bullish - bullish_sma) / bullish_sma
+signal_strength_bearish = (volume_bearish - bearish_sma) / bearish_sma
+
+// 根据信号强度动态调整仓位大小
+long_Qty_adjusted = long_Qty * math.min(1.5, math.max(0.5, signal_strength_bullish))
+short_Qty_adjusted = short_Qty * math.min(1.5, math.max(0.5, signal_strength_bearish))
+
+// 使用调整后的仓位大小进行交易
+if bullish_Condition and (inDateRange) 
+    strategy.entry("Long", strategy.long, qty=long_Qty_adjusted)
+
+if closeLong_Condition
+    strategy.close("Long")
+
+// if bearish_Condition
+//     strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
+
+// if closeShort_Condition
+//     strategy.close("Short")
+
+// stop_loss_percentage = input.float(2.0, "Stop Loss (%)", group="Risk Management")
+// 多頭停損
+// strategy.exit("Stop Loss", from_entry="Long", loss=stop_loss_percentage)
+
+// 空頭停損（如果你啟用了空頭交易的話）
+// strategy.exit("Stop Loss", from_entry="Short", loss=stop_loss_percentage)

@@ -1,0 +1,138 @@
+//@version=5
+strategy("aasqz", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+adxlen = input(14, title="ADX Smoothing")
+dilen = input(14, title="DI Length")
+dirmov(len) =>
+	up = ta.change(high)
+	down = -ta.change(low)
+	plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+	minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+	truerange = ta.rma(ta.tr, len)
+	plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+	minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+	[plus, minus]
+adx(dilen, adxlen) =>
+	[plus, minus] = dirmov(dilen)
+	sum = plus + minus
+	adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+sig = adx(dilen, adxlen)
+// plot(sig, color=color.red, title="ADX")
+
+
+
+// indicator("Andean Oscillator")
+AO_length     = input(50,"AO Length")
+sig_length = input(9,'Signal Length')
+var alpha = 2/(AO_length+1)
+var up1 = 0.,var up2 = 0.
+var dn1 = 0.,var dn2 = 0.
+C = close
+O = open
+up1 := nz(math.max(C, O, up1[1] - (up1[1] - C) * alpha), C)
+up2 := nz(math.max(C * C, O * O, up2[1] - (up2[1] - C * C) * alpha), C * C)
+dn1 := nz(math.min(C, O, dn1[1] + (C - dn1[1]) * alpha), C)
+dn2 := nz(math.min(C * C, O * O, dn2[1] + (C * C - dn2[1]) * alpha), C * C)
+//Components
+bull = math.sqrt(dn2 - dn1 * dn1)
+bear = math.sqrt(up2 - up1 * up1)
+signal = ta.ema(math.max(bull, bear), sig_length)
+
+plot(bull, 'Bullish Component', #089981)
+
+// plot(bear, 'Bearish Component', #f23645)
+
+// plot(signal, 'Signal', #ff9800)
+
+// indicator('Beardy Squeeze Pro', shorttitle='Squeeze', overlay=false, precision=2)
+
+SQZ_length = input.int(20, "TTM Squeeze Length")
+
+//BOLLINGER BANDS
+BB_mult = input.float(2.0, "Bollinger Band STD Multiplier")
+BB_basis = ta.sma(close, SQZ_length)
+dev = BB_mult * ta.stdev(close, SQZ_length)
+BB_upper = BB_basis + dev
+BB_lower = BB_basis - dev
+
+//KELTNER CHANNELS
+KC_mult_high = input.float(1.0, "Keltner Channel #1")
+KC_mult_mid = input.float(1.5, "Keltner Channel #2")
+KC_mult_low = input.float(2.0, "Keltner Channel #3")
+KC_basis = ta.sma(close, SQZ_length)
+devKC = ta.sma(ta.tr, SQZ_length)
+KC_upper_high = KC_basis + devKC * KC_mult_high
+KC_lower_high = KC_basis - devKC * KC_mult_high
+KC_upper_mid = KC_basis + devKC * KC_mult_mid
+KC_lower_mid = KC_basis - devKC * KC_mult_mid
+KC_upper_low = KC_basis + devKC * KC_mult_low
+KC_lower_low = KC_basis - devKC * KC_mult_low
+
+//SQUEEZE CONDITIONS
+NoSqz = BB_lower < KC_lower_low or BB_upper > KC_upper_low //NO SQUEEZE: GREEN
+LowSqz = BB_lower >= KC_lower_low or BB_upper <= KC_upper_low //LOW COMPRESSION: BLACK
+MidSqz = BB_lower >= KC_lower_mid or BB_upper <= KC_upper_mid //MID COMPRESSION: RED
+HighSqz = BB_lower >= KC_lower_high or BB_upper <= KC_upper_high //HIGH COMPRESSION: ORANGE
+
+//MOMENTUM OSCILLATOR
+mom = ta.linreg(close - math.avg(math.avg(ta.highest(high, SQZ_length), ta.lowest(low, SQZ_length)), ta.sma(close, SQZ_length)), SQZ_length, 0)
+
+//MOMENTUM HISTOGRAM COLOR
+iff_1 = mom > nz(mom[1]) ? color.new(color.aqua, 0) : color.new(#2962ff, 0)
+iff_2 = mom < nz(mom[1]) ? color.new(color.red, 0) : color.new(color.yellow, 0)
+mom_color = mom > 0 ? iff_1 : iff_2
+
+//SQUEEZE DOTS COLOR
+sq_color = HighSqz ? color.new(color.orange, 0) : MidSqz ? color.new(color.red, 0) : LowSqz ? color.new(color.black, 0) : color.new(color.green, 0)
+
+//ALERTS
+Detect_Sqz_Start = input.bool(true, "Alert Price Action Squeeze")
+Detect_Sqz_Fire = input.bool(true, "Alert Squeeze Firing")
+
+// if Detect_Sqz_Start and NoSqz[1] and not NoSqz
+//     alert("Squeeze Started")
+// else if Detect_Sqz_Fire and NoSqz and not NoSqz[1]
+//     alert("Squeeze Fired")
+
+//PLOTS
+// plot(mom, title='MOM', color=mom_color, style=plot.style_columns, linewidth=2)
+// plot(0, title='SQZ', color=sq_color, style=plot.style_circles, linewidth=3)
+
+
+long_condition = sig > 20 and bull > signal and sq_color == color.new(color.green, 0)
+long_take_profit = bull < signal
+
+
+short_condition = sig > 20 and bear > signal and sq_color == color.new(color.green, 0)
+short_take_profit = bear < signal
+
+if(inDateRange)
+    if(long_condition)
+        strategy.entry("Long", strategy.long)
+    if(long_take_profit)
+        strategy.close("Long")
+    if(short_condition)
+        strategy.entry("Short", strategy.short)
+    if(short_take_profit)
+        strategy.close("Short")
+
+
+
+
+
+
+
+

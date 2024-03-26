@@ -1,0 +1,60 @@
+//@version=5
+strategy("NWEATRRSI", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(0) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+NWE_Upper = input.source(open, title="NWE_Upper")
+NWE_Lower = input.source(close, title="NWE_Lower")
+
+ATR_ShortStop = input.source(open, title="ATR_ShortStop")
+ATR_LongStop = input.source(close, title="ATR_LongStop")
+
+RSI_Length = input(14, title="RSI Length")
+RSI_Overbought = input(70, title="RSI Overbought")
+RSI_Oversold = input(30, title="RSI Oversold")
+RSI = ta.rsi(close, RSI_Length)
+
+
+
+longCondition =  RSI < RSI_Oversold and close > NWE_Lower and close>open
+
+var float ATR_LongStopLoss = na
+var float longLossPercent = 0.02
+takeProfitRatio = input(1.5, title="Take Profit Ratio 1:?")
+closeLongCondition = (na(ATR_LongStopLoss) ? false : close < ATR_LongStopLoss) or close > strategy.opentrades.entry_price(1)*(1+longLossPercent*takeProfitRatio)
+
+
+
+    //加上盈虧比止盈止損、右側止盈
+
+// shortCondition = not na(Down_Trend) and not na(QQE_Down) and AV2_Close < AV2_Open
+
+// closeShortCondition = AV2_Close > AV2_Open or close >= math.min(AV2_Open, AV2_Close)
+
+
+
+if(inDateRange)
+    if(longCondition)
+        // strategy.close("Short")
+        strategy.entry("Long", strategy.long)
+        ATR_LongStopLoss := math.min(close*0.98, ATR_LongStop)
+        longLossPercent := (1-ATR_LongStopLoss/close)
+    if(closeLongCondition)
+        strategy.close("Long")
+    // if(shortCondition)
+    //     strategy.close("Long")
+    //     strategy.entry("Short", strategy.short)
+    // if(closeShortCondition)
+    //     strategy.close("Short")
+

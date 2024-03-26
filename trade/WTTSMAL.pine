@@ -131,17 +131,20 @@ take_Profit = strategy.opentrades.entry_price(strategy.opentrades-1) + now_Atr *
 stop_Price = strategy.opentrades.entry_price(strategy.opentrades-1) - now_Atr * stop_LossMultiplier
 
 // 使用调整后的仓位大小进行交易
-if bullish_Condition and (inDateRange) 
+if bullish_Condition and inDateRange
     strategy.entry("Long", strategy.long, qty=long_Qty_adjusted)
+    op_Atr := now_Atr
 
-if closeLong_Condition
-    strategy.close("Long")
+strategy.exit("Stop Loss", from_entry="Long", loss=stop_Price, limit= take_Profit)
 
-if bearish_Condition
-    strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
 
-if closeShort_Condition
-    strategy.close("Short")
+plot (take_Profit, color=color.green, style=plot.style_steplinebr)
+plot (stop_Price, color=color.red , style=plot.style_steplinebr)
+// if bearish_Condition
+//     strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
+
+// if closeShort_Condition
+//     strategy.close("Short")
 
 
 // 设置止损和止盈点

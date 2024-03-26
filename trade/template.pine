@@ -1,0 +1,61 @@
+//@version=5
+strategy("Template", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+AV2_Open = input.source(open, title="AV2_Open")
+AV2_Close = input.source(close, title="AV2_Close")
+
+Up_Trend = input.source(open, title="Up_Trend")
+Down_Trend = input.source(close, title="Down_Trend")
+
+QQE_Up = input.source(open, title="QQE_Up")
+QQE_Down = input.source(close, title="QQE_Down")
+
+
+
+longCondition =  not na(Up_Trend) and not na(QQE_Up) and AV2_Close > AV2_Open
+
+closeLongCondition = AV2_Close < AV2_Open or close <= math.max(AV2_Open, AV2_Close) or not na(Down_Trend) and not na(QQE_Down) or close < strategy.opentrades.entry_price(strategy.opentrades-1)
+
+bool leftTakeProfit= input(true, title="Left Stop Loss")
+
+float leftTakeProfitPercent = input(50, title="Left Stop Loss Percent%")/100
+
+bool rightStopLoss = input(true, title="Right Stop Loss")
+
+var float longStopPrice = na
+if (longCondition)
+    longStopPrice := close * 0.98
+
+    //加上盈虧比止盈止損、右側止盈
+
+shortCondition = not na(Down_Trend) and not na(QQE_Down) and AV2_Close < AV2_Open
+
+closeShortCondition = AV2_Close > AV2_Open or close >= math.min(AV2_Open, AV2_Close)
+
+
+
+if(inDateRange)
+    if(longCondition)
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long)
+    if(closeLongCondition)
+        strategy.close("Long")
+    if(shortCondition)
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short)
+    if(closeShortCondition)
+        strategy.close("Short")
+

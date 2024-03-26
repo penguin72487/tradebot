@@ -17,8 +17,8 @@ inDateRange := inDateRange or (not timelock) // Use 'not timelock' for clarity
 
 
 
-fibLookbackPeriod = input(59, title="Fibonacci Lookback Period") // Fibonacci 回看期
-percentOfEquity = input(10, title="Percent of Equity") / 100 // 使用总资金的百分比
+fibLookbackPeriod = input(61, title="Fibonacci Lookback Period") // Fibonacci 回看期
+percentOfEquity = input(20, title="Percent of Equity") / 100 // 使用总资金的百分比
 closeOffset = input(1, title="Close Offset") // 价格偏移
 
 // 设置Fibonacci层次
@@ -99,32 +99,6 @@ float investment = strategy.equity * percentOfEquity
 // 计算交易数量，这里简单地将投资金额除以当前价格
 float qty = investment / close
 
-// if(longshorted >= 0)
-//     if(fibnow>fib_State)
-//         // strategy.close("Long")
-//         strategy.entry("Short", strategy.short, qty=qty)
-//         fib_State := fibnow
-//         longshorted := -1
-//     else if(fibnow<fib_State-1)
-//         // strategy.close("Short")
-//         strategy.entry("Long", strategy.long, qty=qty)
-//         fib_State := fibnow+1
-//         longshorted := 1
-        
-
-// else if(longshorted <= 0)
-//     if(fibnow<fib_State-1)
-//         // strategy.close("Short")
-//         strategy.entry("Long", strategy.long, qty=qty)
-//         fib_State := fibnow+1
-//         longshorted := 1
-//     else if(fibnow>fib_State)
-//         // strategy.close("Long")
-//         strategy.entry("Short", strategy.short, qty=qty)
-//         fib_State := fibnow
-//         longshorted := -1
-
-// reverse
 if(longshorted >= 0)
     if(fibnow>fib_State)
         // strategy.close("Long")

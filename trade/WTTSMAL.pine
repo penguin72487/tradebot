@@ -116,21 +116,35 @@ signal_strength_bearish = (volume_bearish - bearish_sma) / bearish_sma
 long_Qty_adjusted = long_Qty * math.min(1.5, math.max(0.5, signal_strength_bullish))
 short_Qty_adjusted = short_Qty * math.min(1.5, math.max(0.5, signal_strength_bearish))
 
+
+atr_Length = input.int(14, title="ATR Length", group="ATR")
+take_ProfitMultiplier = input.float(2.0, title="Take Profit Multiplier", group="ATR")
+stop_LossMultiplier = input.float(2.0, title="Stop Loss Multiplier", group="ATR")
+
+var op_Atr = 0.0
+now_Atr = ta.atr(atr_Length)
+
+take_Profit = strategy.opentrades.entry_price(strategy.opentrades-1) + now_Atr * take_ProfitMultiplier
+stop_Price = strategy.opentrades.entry_price(strategy.opentrades-1) - now_Atr * stop_LossMultiplier
+
 // 使用调整后的仓位大小进行交易
 if bullish_Condition
     strategy.entry("Long", strategy.long, qty=long_Qty_adjusted)
+    op_Atr := now_Atr
 
-if closeLong_Condition
-    strategy.close("Long")
-
-if bearish_Condition
-    strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
-
-if closeShort_Condition
-    strategy.close("Short")
+strategy.exit("Stop Loss", from_entry="Long", loss=stop_Price, limit= take_Profit)
 
 
-// 设置止损和止盈点
+plot (take_Profit, color=color.green)
+plot (stop_Price, color=color.red)
+// if bearish_Condition
+//     strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
+
+// if closeShort_Condition
+//     strategy.close("Short")
+
+
+// // 设置止损和止盈点
 // stop_loss_percentage = input.float(2.0, "Stop Loss (%)", group="Risk Management")
 // take_profit_percentage = input.float(4.0, "Take Profit (%)", group="Risk Management")
 

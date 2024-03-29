@@ -26,18 +26,9 @@ closeLong_Condition =  bullish_sma < bearish_sma
 if bullish_Condition and (inDateRange) 
     strategy.entry("Long", strategy.long)
 
-if closeLong_Condition
-    strategy.close("Long")
 
 // if bearish_Condition
 //     strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
 
 // if closeShort_Condition
 //     strategy.close("Short")
-
-// stop_loss_percentage = input.float(2.0, "Stop Loss (%)", group="Risk Management")
-// 多頭停損
-// strategy.exit("Stop Loss", from_entry="Long", loss=stop_loss_percentage)
-
-// 空頭停損（如果你啟用了空頭交易的話）
-// strategy.exit("Stop Loss", from_entry="Short", loss=stop_loss_percentage)

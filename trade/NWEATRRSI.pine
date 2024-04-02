@@ -27,34 +27,40 @@ RSI = ta.rsi(close, RSI_Length)
 
 
 
-longCondition =  RSI < RSI_Oversold and close > NWE_Lower and close>open
+longCondition =  RSI < RSI_Oversold and close > NWE_Lower and close>open and math.min(close[1],close[2],close[3]) < NWE_Lower
 
 var float ATR_LongStopLoss = na
 var float longLossPercent = 0.02
 takeProfitRatio = input(1.5, title="Take Profit Ratio 1:?")
 closeLongCondition = (na(ATR_LongStopLoss) ? false : close < ATR_LongStopLoss) or close > strategy.opentrades.entry_price(1)*(1+longLossPercent*takeProfitRatio)
 
+plot(strategy.opentrades.entry_price(1)*(1+longLossPercent*takeProfitRatio), color=color.green, linewidth=2, title="Long Take Profit")
 
 
     //加上盈虧比止盈止損、右側止盈
 
-// shortCondition = not na(Down_Trend) and not na(QQE_Down) and AV2_Close < AV2_Open
+shortCondition = RSI > RSI_Overbought and close < NWE_Upper and close<open and math.max(close[1],close[2], close[3]) > NWE_Upper
 
-// closeShortCondition = AV2_Close > AV2_Open or close >= math.min(AV2_Open, AV2_Close)
+var float ATR_ShortStopLoss = na
+var float shortLossPercent = 0.02
+closeShortCondition = (na(ATR_ShortStopLoss) ? false : close > ATR_ShortStopLoss) or close < strategy.opentrades.entry_price(1)*(1-shortLossPercent*takeProfitRatio)
 
-
+plot(strategy.opentrades.entry_price(1)*(1-shortLossPercent*takeProfitRatio), color=color.red, linewidth=2, title="Short Take Profit")
 
 if(inDateRange)
     if(longCondition)
-        // strategy.close("Short")
+        strategy.close("Short")
         strategy.entry("Long", strategy.long)
         ATR_LongStopLoss := math.min(close*0.98, ATR_LongStop)
         longLossPercent := (1-ATR_LongStopLoss/close)
     if(closeLongCondition)
         strategy.close("Long")
-    // if(shortCondition)
-    //     strategy.close("Long")
-    //     strategy.entry("Short", strategy.short)
-    // if(closeShortCondition)
-    //     strategy.close("Short")
+    
+    if(shortCondition)
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short)
+        ATR_ShortStopLoss := math.max(close*1.02, ATR_ShortStop)
+        shortLossPercent := (ATR_ShortStopLoss/close-1)
+    if(closeShortCondition)
+        strategy.close("Short")
 

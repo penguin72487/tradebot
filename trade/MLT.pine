@@ -1,0 +1,39 @@
+//@version=5
+strategy("MLT", overlay=true,  pyramiding=2, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.05,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+ML_Buy = input.source(open, title="ML_Buy")
+ML_Sell = input.source(close, title="ML_Sell")
+ML_StopBuy = input.source(close, title="ML_StopBuy")
+ML_StopSell = input.source(close, title="ML_StopSell")
+
+longCondition = not na(ML_Buy)
+StopBuyCondition = not na(ML_StopBuy)
+shortCondition = not na(ML_Sell)
+StopSellCondition = not na(ML_StopSell)
+
+lever = input(1,"leverage")
+if (inDateRange)
+    if(longCondition)
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long, qty=strategy.equity/close*lever)
+    if(shortCondition)
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short, qty=strategy.equity/close*lever)
+    if(StopBuyCondition)
+        strategy.close("Long")
+    if(StopSellCondition)
+        strategy.close("Short")
+

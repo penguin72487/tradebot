@@ -1,0 +1,48 @@
+//@version=5
+strategy("SPQQEAV2", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.05,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+PMA12 = input.source(close, title="PMA12")
+PMA144 = input.source(close, title="PMA144")
+PMA169 = input.source(close, title="PMA169")
+PMA576 = input.source(close, title="PMA576")
+PMA676 = input.source(close, title="PMA676")
+
+
+var prev_PMA12 = 0.0
+var prev_PMA144 = 0.0
+var prev_PMA169 = 0.0
+var prev_PMA576 = 0.0
+var prev_PMA676 = 0.0
+
+PMA12diff = PMA12 - prev_PMA12//Differentia
+PMA144diff = PMA144 - prev_PMA144
+PMA169diff = PMA169 - prev_PMA169
+PMA576diff = PMA576 - prev_PMA576
+PMA676diff = PMA676 - prev_PMA676
+// 進場條件
+
+
+
+// longCondition = not na(PMA12diff) and PMA12diff > 0 and PMA12diff > PMA144diff and PMA12diff > PMA169diff and PMA12diff > PMA576diff and PMA12diff > PMA676diff
+// shortCondition = 
+
+
+// take profit
+gold_Cross = input.source(0.25, title="gold_Cross")
+break_Meddle = input.source(0.25, title="break_Meddle")
+// break_Hard = input.source(0.5, title="break_Hard")
+
+

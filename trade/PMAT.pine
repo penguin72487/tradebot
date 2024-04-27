@@ -1,5 +1,5 @@
 //@version=5
-strategy("SPQQEAV2", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.05,initial_capital=1000)
+strategy("PMAT", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.05,initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
@@ -34,15 +34,97 @@ PMA576diff = PMA576 - prev_PMA576
 PMA676diff = PMA676 - prev_PMA676
 // 進場條件
 
+long_InitCondition() =>
+    conditionClose = close > PMA12 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
+    conditionPMA12 = PMA12 > PMA144 and PMA12 > PMA169 and PMA12 > PMA576 and PMA12 > PMA676
+    conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
+    long_IC = conditionClose and conditionPMA12 and conditionDiff
+    [long_IC]
+
+long_GoldCrossCondition() =>
+    conditionPMA144 = PMA144>PMA576 and PMA144>PMA676
+    conditionPMA169 = PMA169>PMA576 and PMA169>PMA676
+    long_GC = conditionPMA144 and conditionPMA169
+    [long_GC]
+
+long_DivergenceMidCondition() =>
+    conditionClose = close < PMA12 and close < PMA144  and close < PMA169 and close < PMA576 and close < PMA676
+    conditionPMA12 = PMA12 < PMA144 and PMA12 < PMA169 and PMA12 < PMA576 and PMA12 < PMA676
+    conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
+    long_DM = conditionClose and conditionPMA12 and conditionDiff
+    [long_DM]
+
+long_ExitCondition() =>
+    conditionClose = close < PMA12 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
+    conditionPMA12 = PMA12 < PMA144 and PMA12 < PMA169 and PMA12 < PMA576 and PMA12 < PMA676
+    conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
+    long_EC = conditionClose and conditionPMA12 and conditionDiff
+    [long_EC]
 
 
-// longCondition = not na(PMA12diff) and PMA12diff > 0 and PMA12diff > PMA144diff and PMA12diff > PMA169diff and PMA12diff > PMA576diff and PMA12diff > PMA676diff
-// shortCondition = 
+short_InitCondition() =>
+    conditionClose = close < PMA12 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
+    conditionPMA12 = PMA12 < PMA144 and PMA12 < PMA169 and PMA12 < PMA576 and PMA12 < PMA676
+    conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
+    short_IC = conditionClose and conditionPMA12 and conditionDiff
+    [short_IC]
 
+short_GoldCrossCondition() =>
+    conditionPMA144 = PMA144<PMA576 and PMA144<PMA676
+    conditionPMA169 = PMA169<PMA576 and PMA169<PMA676
+    short_GC = conditionPMA144 and conditionPMA169
+    [short_GC]
+
+short_DivergenceMidCondition() =>
+    conditionClose = close > PMA12 and close > PMA144 
+    conditionPMA12 = PMA12 > PMA144 and PMA12 > PMA169
+    conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff<0 and PMA676diff<0
+    short_DM = conditionClose and conditionPMA12 and conditionDiff
+    [short_DM]
+
+short_ExitCondition() =>
+    conditionClose = close > PMA12 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
+    conditionPMA12 = PMA12 > PMA144 and PMA12 > PMA169 and PMA12 > PMA576 and PMA12 > PMA676
+    conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
+    short_EC = conditionClose and conditionPMA12 and conditionDiff
+    [short_EC]
 
 // take profit
-gold_Cross = input.source(0.25, title="gold_Cross")
-break_Meddle = input.source(0.25, title="break_Meddle")
+gold_Cross = input(0.25, title="gold_Cross")
+break_Meddle = input(0.25, title="break_Meddle")
 // break_Hard = input.source(0.5, title="break_Hard")
 
+// entry
+leverage = input(1,"leverage")
+
+[longCondition] = long_InitCondition()
+[longGoldCrossCondition] = long_GoldCrossCondition()
+[longDivergenceMidCondition] = long_DivergenceMidCondition()
+[longExitCondition] = long_ExitCondition()
+[shortCondition] = short_InitCondition()
+[shortGoldCrossCondition] = short_GoldCrossCondition()
+[shortDivergenceMidCondition] = short_DivergenceMidCondition()
+[shortExitCondition] = short_ExitCondition()
+
+
+
+
+if(inDateRange)
+    if(longCondition)
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage)
+    if(shortCondition)
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage)
+
+//plot
+
+plot(longCondition? 1 : 0, title="longCondition")
+plot(longGoldCrossCondition? 1 : 0, title="longGoldCrossCondition")
+plot(longDivergenceMidCondition? 1 : 0, title="longDivergenceMidCondition")
+plot(longExitCondition? 1 : 0, title="longExitCondition")
+plot(shortCondition? 1 : 0, title="shortCondition")
+plot(shortGoldCrossCondition? 1 : 0, title="shortGoldCrossCondition")
+plot(shortDivergenceMidCondition? 1 : 0, title="shortDivergenceMidCondition")
+plot(shortExitCondition? 1 : 0, title="shortExitCondition")
 

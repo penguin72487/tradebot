@@ -43,8 +43,8 @@ prev_PMA676 := PMA676
 
 
 // take profit
-gold_Cross_Enable = input(bool(1), title="gold_Cross_Enable")
-gold_Cross = input(25, title="gold_Cross")
+// gold_Cross_Enable = input(bool(1), title="gold_Cross_Enable")
+// gold_Cross = input(25, title="gold_Cross")
 
 break_Meddle_Enable = input(bool(1), title="break_Meddle_Enable")
 break_Meddle = input(25, title="break_Meddle")
@@ -57,7 +57,7 @@ left_Take_Profit_Ratio = input(2.0, title="1:?")*left_Take_Profit_Mutiplier
 var float left_Take_Profit_Price = na 
 
 
-var gold_Crossed = bool(0)
+// var gold_Crossed = bool(0)
 var break_Crossed = bool(0)
 var left_Crossed = bool(0)
 
@@ -66,15 +66,17 @@ var left_Crossed = bool(0)
 long_InitCondition() =>
     conditionClose = close > PMA12 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
     conditionPMA12 = PMA12 > PMA144 and PMA12 > PMA169 and PMA12 > PMA576 and PMA12 > PMA676
+    conditionPMA144 = PMA144>PMA576 and PMA144>PMA676
+    conditionPMA169 = PMA169>PMA576 and PMA169>PMA676
     conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
     long_IC = conditionClose and conditionPMA12 and conditionDiff and strategy.position_size<=0
     [long_IC]
 
-long_GoldCrossCondition() =>
-    conditionPMA144 = PMA144>PMA576 and PMA144>PMA676
-    conditionPMA169 = PMA169>PMA576 and PMA169>PMA676
-    long_GC = conditionPMA144 and conditionPMA169 and not gold_Crossed and strategy.position_size>0 and gold_Cross_Enable
-    [long_GC]
+// long_GoldCrossCondition() =>
+//     conditionPMA144 = PMA144>PMA576 and PMA144>PMA676
+//     conditionPMA169 = PMA169>PMA576 and PMA169>PMA676
+//     long_GC = conditionPMA144 and conditionPMA169 and not gold_Crossed and strategy.position_size>0 and gold_Cross_Enable
+//     [long_GC]
 
 long_DivergenceMidCondition() =>
     conditionClose = close < PMA12 and close < PMA144  and close < PMA169 and close < PMA576 and close < PMA676
@@ -98,15 +100,17 @@ long_ExitCondition() =>
 short_InitCondition() =>
     conditionClose = close < PMA12 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
     conditionPMA12 = PMA12 < PMA144 and PMA12 < PMA169 and PMA12 < PMA576 and PMA12 < PMA676
+    conditionPMA144 = PMA144<PMA576 and PMA144<PMA676
+    conditionPMA169 = PMA169<PMA576 and PMA169<PMA676
     conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
     short_IC = conditionClose and conditionPMA12 and conditionDiff and strategy.position_size>=0 
     [short_IC]
 
-short_GoldCrossCondition() =>
-    conditionPMA144 = PMA144<PMA576 and PMA144<PMA676
-    conditionPMA169 = PMA169<PMA576 and PMA169<PMA676
-    short_GC = conditionPMA144 and conditionPMA169 and not gold_Crossed and strategy.position_size<0 and gold_Cross_Enable
-    [short_GC]
+// short_GoldCrossCondition() =>
+//     conditionPMA144 = PMA144<PMA576 and PMA144<PMA676
+//     conditionPMA169 = PMA169<PMA576 and PMA169<PMA676
+//     short_GC = conditionPMA144 and conditionPMA169 and not gold_Crossed and strategy.position_size<0 and gold_Cross_Enable
+//     [short_GC]
 
 short_DivergenceMidCondition() =>
     conditionClose = close > PMA12 and close > PMA144 
@@ -133,12 +137,12 @@ short_ExitCondition() =>
 leverage = input(1,"leverage")
 
 [longCondition] = long_InitCondition()
-[longGoldCrossCondition] = long_GoldCrossCondition()
+// [longGoldCrossCondition] = long_GoldCrossCondition()
 [longDivergenceMidCondition] = long_DivergenceMidCondition()
 [longLeftTakeProfitCondition] = long_LeftTakeProfitCondition()
 [longExitCondition] = long_ExitCondition()
 [shortCondition] = short_InitCondition()
-[shortGoldCrossCondition] = short_GoldCrossCondition()
+// [shortGoldCrossCondition] = short_GoldCrossCondition()
 [shortDivergenceMidCondition] = short_DivergenceMidCondition()
 [shortLeftTakeProfitCondition] = short_LeftTakeProfitCondition()
 [shortExitCondition] = short_ExitCondition()
@@ -151,14 +155,14 @@ if(inDateRange)
     if(longCondition)
         strategy.close("Short")
         strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage)
-        gold_Crossed := bool(0)
+        // gold_Crossed := bool(0)
         break_Crossed := bool(0)
         left_Crossed := bool(0)
         left_Take_Profit_Price := (close-math.min(PMA576,PMA676))*left_Take_Profit_Ratio+close
 
-    if(longGoldCrossCondition)
-        strategy.close("Long","long gold take profit", qty_percent=gold_Cross)
-        gold_Crossed :=  bool(1)
+    // if(longGoldCrossCondition)
+    //     strategy.close("Long","long gold take profit", qty_percent=gold_Cross)
+    //     gold_Crossed :=  bool(1)
     if(longDivergenceMidCondition)
         strategy.close("Long","long div take profit", qty_percent=break_Meddle)
         break_Crossed := bool(1)
@@ -173,14 +177,14 @@ if(inDateRange)
     if(shortCondition)
         strategy.close("Long")
         strategy.entry("Short",strategy.short, qty=strategy.equity/close*leverage)
-        gold_Crossed := bool(0)
+        // gold_Crossed := bool(0)
         break_Crossed := bool(0)
         left_Crossed := bool(0)
         left_Take_Profit_Price := (close-math.max(PMA576,PMA676))*left_Take_Profit_Ratio+close
         
-    if(shortGoldCrossCondition)
-        strategy.close("Short","short gold take profit", qty_percent=gold_Cross)
-        gold_Crossed := bool(1)
+    // if(shortGoldCrossCondition)
+    //     strategy.close("Short","short gold take profit", qty_percent=gold_Cross)
+    //     gold_Crossed := bool(1)
     if(shortDivergenceMidCondition)
         strategy.close("Short","short div take profit", qty_percent=break_Meddle)
         break_Crossed := bool(1)
@@ -196,12 +200,12 @@ if(inDateRange)
 //plot
 Debugger = input (bool(0), title="show Debugger?")
 plot(longCondition and Debugger? 1 : na, title="longCondition")
-plot(longGoldCrossCondition and Debugger? 1 : na, title="longGoldCrossCondition")
+// plot(longGoldCrossCondition and Debugger? 1 : na, title="longGoldCrossCondition")
 plot(longDivergenceMidCondition and Debugger? 1 : na, title="longDivergenceMidCondition")
 plot(longExitCondition and Debugger? 1 : na, title="longExitCondition")
 plot(shortCondition and Debugger? 1 : na, title="shortCondition")
-plot(shortGoldCrossCondition and Debugger? 1 : na, title="shortGoldCrossCondition")
+// plot(shortGoldCrossCondition and Debugger? 1 : na, title="shortGoldCrossCondition")
 plot(shortDivergenceMidCondition and Debugger? 1 : na, title="shortDivergenceMidCondition")
 plot(shortExitCondition and Debugger? 1 : na, title="shortExitCondition")
-plot(Debugger? gold_Cross : na, title="gold_Cross")
+// plot(Debugger? gold_Cross : na, title="gold_Cross")
 plot(Debugger? break_Meddle : na, title="break_Meddle")

@@ -69,7 +69,7 @@ long_InitCondition() =>
     conditionPMA144 = PMA144>PMA576 and PMA144>PMA676
     conditionPMA169 = PMA169>PMA576 and PMA169>PMA676
     conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
-    long_IC = conditionClose and conditionPMA12 and conditionDiff and strategy.position_size<=0
+    long_IC = conditionClose and conditionPMA12 and conditionDiff and conditionPMA144 and conditionPMA169 and strategy.position_size<=0
     [long_IC]
 
 // long_GoldCrossCondition() =>
@@ -103,7 +103,7 @@ short_InitCondition() =>
     conditionPMA144 = PMA144<PMA576 and PMA144<PMA676
     conditionPMA169 = PMA169<PMA576 and PMA169<PMA676
     conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
-    short_IC = conditionClose and conditionPMA12 and conditionDiff and strategy.position_size>=0 
+    short_IC = conditionClose and conditionPMA12 and conditionDiff and conditionPMA144 and conditionPMA169 and strategy.position_size>=0
     [short_IC]
 
 // short_GoldCrossCondition() =>

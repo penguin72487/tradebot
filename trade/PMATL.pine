@@ -176,8 +176,9 @@ if(inDateRange)
         strategy.close("Long","long left take profit", qty_percent=left_Take_Profit)
         left_Crossed := bool(1)
 
-    if(longExitCondition or force_Stop_Loss_Price<close)
+    if(longExitCondition or close<force_Stop_Loss_Price)
         strategy.close("Long")
+        force_Stop_Loss_Price := na
 
 
     if(shortCondition)
@@ -187,7 +188,7 @@ if(inDateRange)
         break_Crossed := bool(0)
         left_Crossed := bool(0)
         left_Take_Profit_Price := (close-math.max(PMA576,PMA676))*left_Take_Profit_Ratio+close
-        force_Stop_Loss_Price := close*(1-force_Stop_Loss_Ratio)
+        force_Stop_Loss_Price := close*(1+force_Stop_Loss_Ratio)
         
     if(shortGoldCrossCondition)
         strategy.close("Short","short gold take profit", qty_percent=gold_Cross)
@@ -201,24 +202,25 @@ if(inDateRange)
 
     if(shortExitCondition or close>force_Stop_Loss_Price)
         strategy.close("Short")
+        force_Stop_Loss_Price := na
 
 
 
 if(strategy.position_size>0)
-    if(close>strategy.position_avg_price*(1+0.05*2))
-        force_Stop_Loss_Price := close*(1+force_Stop_Loss_Ratio)
-    if(close>strategy.position_avg_price*(1+0.05*4))
-        force_Stop_Loss_Price := close*(1+force_Stop_Loss_Ratio*2)
+    if(close>strategy.position_avg_price*(1+0.0005*2))
+        force_Stop_Loss_Price := strategy.position_avg_price*(1+0.0005*2)
+    if(close>strategy.position_avg_price*(1+0.0005*4))
+        force_Stop_Loss_Price := strategy.position_avg_price*(1+0.0005*4)
         
 if(strategy.position_size<0)
-    if(close<strategy.position_avg_price*(1-0.05*2))
-        force_Stop_Loss_Price := close*(1-force_Stop_Loss_Ratio)
-    if(close<strategy.position_avg_price*(1-0.05*4))
-        force_Stop_Loss_Price := close*(1-force_Stop_Loss_Ratio*2)
+    if(close<strategy.position_avg_price*(1-0.0005*2))
+        force_Stop_Loss_Price := strategy.position_avg_price*(1-0.0005*2)
+    if(close<strategy.position_avg_price*(1-0.0005*4))
+        force_Stop_Loss_Price := strategy.position_avg_price*(1-0.0005*4)
 
 
 //plot
-Debugger = input (bool(0), title="show Debugger?")
+Debugger = input (bool(1), title="show Debugger?")
 plot(longCondition and Debugger? 1 : na, title="longCondition")
 plot(longGoldCrossCondition and Debugger? 1 : na, title="longGoldCrossCondition")
 plot(longDivergenceMidCondition and Debugger? 1 : na, title="longDivergenceMidCondition")
@@ -229,3 +231,5 @@ plot(shortDivergenceMidCondition and Debugger? 1 : na, title="shortDivergenceMid
 plot(shortExitCondition and Debugger? 1 : na, title="shortExitCondition")
 plot(Debugger? gold_Cross : na, title="gold_Cross")
 plot(Debugger? break_Meddle : na, title="break_Meddle")
+plot(force_Stop_Loss_Price, title="force_Stop_Loss_Price", color=color.red)
+plot(strategy.position_avg_price, title="close<strategy.position_avg_price")

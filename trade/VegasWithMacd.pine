@@ -22,9 +22,8 @@ PMA676 = input.source(close, title="PMA676")
 
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
-MACD_Histogram = input.source(close, title="MACD_Histogram")
 
-Histogram_Filter = input(100, title="Histogram_Filter")
+
 
 
 
@@ -53,7 +52,7 @@ MACD_Signal = MACD - MACDsignal
 long_InitCondition() =>
     conditionClose = MACD_Signal>0 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
     conditionDiff = PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
-    long_IC = conditionClose and conditionDiff and strategy.position_size<=0 and MACD_Histogram>math.abs(Histogram_Filter)
+    long_IC = conditionClose and conditionDiff and strategy.position_size<=0
     [long_IC]
 
 
@@ -69,7 +68,7 @@ close_LongCondition() =>
 short_InitCondition() =>
     conditionClose = MACD_Signal<0 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
     conditionDiff = PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
-    short_IC = conditionClose and conditionDiff and strategy.position_size>=0 and MACD_Histogram>math.abs(Histogram_Filter)
+    short_IC = conditionClose and conditionDiff and strategy.position_size>=0
     [short_IC]
 
 close_ShortCondition() =>

@@ -22,6 +22,7 @@ PMA676 = input.source(close, title="PMA676")
 
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
+MACD_Histogram = input.source(close, title="MACD_Histogram")
 
 
 
@@ -49,60 +50,60 @@ MACD_Signal = MACD - MACDsignal
 
 
 //Finite State Machine
-var state = 0// 0 等待 1 Left long 2 right long 3 left take profit -1 left short -2 right short -3 right take profit
+var state = 0// 0 等待 1 Long 2 Long 3 left take profit -1 Short -2 Short -3 right take profit
 
 
 // 進場條件
 // long condition
 long_Left_Arrangement() =>
-    conditionClose = close>PMA12 and close >676 and close >576 and math.max(PMA144,PMA169)<math.min(PMA576,PMA676)
+    conditionClose = close>PMA12 and close >PMA576 and close >PMA676 and math.max(PMA144,PMA169)<math.min(PMA576,PMA676)
     conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
-    long_LA = conditionClose and conditionDiff and MACD_Signal>0
+    long_LA = conditionClose and conditionDiff and MACD>MACD_Signal
     [long_LA]
 
 long_Right_Arrangement() =>
     conditionClose = close>PMA12 and close >PMA144 and close >PMA169 and close >PMA576 and close >PMA676 and math.min(PMA144,PMA169)>math.max(PMA576,PMA676)
     conditionDiff = PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
-    long_RA = conditionClose and conditionDiff and MACD_Signal>0
+    long_RA = conditionClose and conditionDiff and MACD>MACD_Signal
     [long_RA]
 
 long_Left_Take_Profit() =>
     conditionClose = close < PMA12 
-    long_LLP = conditionClose and MACD_Signal<0
+    long_LLP = conditionClose and MACD<MACD_Signal
     [long_LLP]
 
 long_Close_Condition() =>
-    conditionClose = close<PMA144 and close <PMA169
-    long_CC = MACD_Signal<0 and conditionClose
+    conditionClose = (close<PMA144 and close <PMA169) or (close <PMA576 and close <PMA676)
+    long_CC = MACD<MACD_Signal and conditionClose
     [long_CC]
 
 // short condition
 short_Left_Arrangement() =>
-    conditionClose = close<PMA12 and close <676 and close <576 and math.min(PMA144,PMA169)>math.max(PMA576,PMA676)
+    conditionClose = close<PMA12 and close <PMA576 and close <PMA676 and math.min(PMA144,PMA169)>math.max(PMA576,PMA676)
     conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
-    short_LA = conditionClose and conditionDiff and MACD_Signal<0
+    short_LA = conditionClose and conditionDiff and MACD<MACD_Signal
     [short_LA]
 
 short_Right_Arrangement() =>
     conditionClose = close<PMA12 and close <PMA144 and close <PMA169 and close <PMA576 and close <PMA676 and math.max(PMA144,PMA169)<math.min(PMA576,PMA676)
     conditionDiff = PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
-    short_RA = conditionClose and conditionDiff and MACD_Signal<0
+    short_RA = conditionClose and conditionDiff and MACD<MACD_Signal
     [short_RA]
 
 short_Left_Take_Profit() =>
     conditionClose = close > PMA12 
-    short_LLP = conditionClose and MACD_Signal>0
+    short_LLP = conditionClose and MACD>MACD_Signal
     [short_LLP]
 
 short_Close_Condition() =>
-    conditionClose = close>PMA144 and close >PMA169
-    short_CC = MACD_Signal>0 and conditionClose
+    conditionClose = (close>PMA144 and close >PMA169) or (close >PMA576 and close >PMA676)
+    short_CC = MACD>MACD_Signal and conditionClose
     [short_CC]
     
 
-leverage = input(1, "Leverage")
+leverage = input(1.0, "Leverage")*math.abs(MACD_Histogram)*0.001
 
-leftTakeProfitPercent = input(50, "Left Take Profit Percent%")
+leftTakeProfitPercent = input(50.0, "Left Take Profit Percent%")
 
 
 [longLeftArrangement] = long_Left_Arrangement()
@@ -118,64 +119,64 @@ if (inDateRange)
     switch state
         0 =>
             if longLeftArrangement
-                strategy.entry("Left Long", strategy.long)
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 Long")
                 state := 1
             if(longRightArrangement)
-                strategy.entry("Right Long", strategy.long)
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 Long")
                 state := 2
             if shortLeftArrangement
-                strategy.entry("Left Short", strategy.short)
+                strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage, comment="state 0 Short")
                 state := -1
             if shortRightArrangement
-                strategy.entry("Right Short", strategy.short)
+                strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage, comment="state 0 Short")
                 state := -2
         1 =>
             if longLeftTakeProfit
-                strategy.close("Left Long", qty_percent=leftTakeProfitPercent, comment="state 1 Left Take Profit")
+                strategy.close("Long", qty_percent=leftTakeProfitPercent, comment="state 1 Left Take Profit")
                 state := 3
             if longRightArrangement
-                strategy.entry("Right Long", strategy.long)
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 1 Right Long")
                 state := 2
             if longCloseCondition
-                strategy.close("Left Long", qty_percent=100, comment="Close Left All Long")
+                strategy.close("Long", qty_percent=100, comment="Close Left All Long")
                 state := 0
         2 =>
             // if longLeftTakeProfit
-            //     strategy.close("Right Long", qty_percent=leftTakeProfitPercent, comment="state 2 Left Take Profit")
+            //     strategy.close("Long", qty_percent=leftTakeProfitPercent, comment="state 2 Left Take Profit")
             //     state := 3
             if longCloseCondition
-                strategy.close("Right Long", qty_percent=100, comment="Close Right ALL Long")
+                strategy.close("Long", qty_percent=100, comment="Close ALL Long")
                 state := 0
         3 =>
             if longRightArrangement
-                strategy.entry("Right Long", strategy.long)
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 3 Right Long")
                 state := 2
             if longCloseCondition
-                strategy.close("Left Long", qty_percent=100, comment="Close ALL Long")
+                strategy.close("Long", qty_percent=100, comment="Close ALL Long")
                 state := 0
         -1 =>
             if shortLeftTakeProfit
-                strategy.close("Left Short", qty_percent=leftTakeProfitPercent, comment="state -1 Left Take Profit")
+                strategy.close("Short", qty_percent=leftTakeProfitPercent, comment="state -1 Left Take Profit")
                 state := -3
             if shortRightArrangement
-                strategy.entry("Right Short", strategy.short)
+                strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage, comment="state -1 Right Short")
                 state := -2
             if shortCloseCondition
-                strategy.close("Left Short", qty_percent=100, comment="Close Left ALL Short")
+                strategy.close("Short", qty_percent=100, comment="Close Left ALL Short")
                 state := 0
         -2 =>
             // if shortLeftTakeProfit
-            //     strategy.close("Right Short", qty_percent=leftTakeProfitPercent, comment="state -2 Left Take Profit")
+            //     strategy.close("Short", qty_percent=leftTakeProfitPercent, comment="state -2 Left Take Profit")
             //     state := -3
             if shortCloseCondition
-                strategy.close("Right Short", qty_percent=100, comment="Close Right ALL Short")
+                strategy.close("Short", qty_percent=100, comment="Close ALL Short")
                 state := 0
         -3 =>
             if shortRightArrangement
-                strategy.entry("Right Short", strategy.short)
+                strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage, comment="state -3 Right Short")
                 state := -2
             if shortCloseCondition
-                strategy.close("Left Short", qty_percent=100, comment="Close ALL Short")
+                strategy.close("Short", qty_percent=100, comment="Close ALL Short")
                 state := 0
         
 

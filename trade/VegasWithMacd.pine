@@ -14,7 +14,7 @@ timelock = input(bool(0) ,"Time lock")
 // 判斷當前條是否在指定的時間範圍內
 inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
-// PMA12 = input.source(close, title="PMA12")
+PMA12 = input.source(close, title="PMA12")
 PMA144 = input.source(close, title="PMA144")
 PMA169 = input.source(close, title="PMA169")
 PMA576 = input.source(close, title="PMA576")
@@ -25,21 +25,26 @@ MACDsignal = input.source(close, title="MACDsignal")
 
 
 
+var state = 0 // 0 standby, 1 longenable -1 shortenable
 
+if(close<PMA576 and close<PMA676)
+    state := 1
+if(close>PMA576 and close>PMA676)
+    state := -1
 
-// var prev_PMA12 = 0.0
+var prev_PMA12 = 0.0
 var prev_PMA144 = 0.0
 var prev_PMA169 = 0.0
 var prev_PMA576 = 0.0
 var prev_PMA676 = 0.0
 
-// PMA12diff = PMA12 - prev_PMA12//Differentia
+PMA12diff = PMA12 - prev_PMA12//Differentia
 PMA144diff = PMA144 - prev_PMA144
 PMA169diff = PMA169 - prev_PMA169
 PMA576diff = PMA576 - prev_PMA576
 PMA676diff = PMA676 - prev_PMA676
 
-// prev_PMA12 := PMA12
+prev_PMA12 := PMA12
 prev_PMA144 := PMA144
 prev_PMA169 := PMA169
 prev_PMA576 := PMA576
@@ -52,13 +57,14 @@ MACD_Signal = MACD - MACDsignal
 long_InitCondition() =>
     conditionClose = MACD_Signal>0 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
     conditionDiff = PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
-    long_IC = conditionClose and conditionDiff and strategy.position_size<=0
+    long_IC = conditionClose and conditionDiff and strategy.position_size<=0 and state >=0
     [long_IC]
 
 
 close_LongCondition() =>
-    conditionClose = close < PMA576 and close < PMA676
-    c_LC = MACD_Signal<0 and conditionClose and strategy.position_size>0
+    conditionClose = close < PMA12
+    conditionDiff = PMA12diff<0
+    c_LC = MACD_Signal<0 and conditionClose and conditionDiff and strategy.position_size>0
     [c_LC]
     
 // addLong_Condition() =>
@@ -68,12 +74,13 @@ close_LongCondition() =>
 short_InitCondition() =>
     conditionClose = MACD_Signal<0 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
     conditionDiff = PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
-    short_IC = conditionClose and conditionDiff and strategy.position_size>=0
+    short_IC = conditionClose and conditionDiff and strategy.position_size>=0 and state <=0
     [short_IC]
 
 close_ShortCondition() =>
-    conditionClose = close > PMA576 and close > PMA676
-    c_SC = MACD_Signal>0 and conditionClose and strategy.position_size<0
+    conditionClose = close >PMA12
+    conditionDiff = PMA12diff>0
+    c_SC = MACD_Signal>0  and conditionDiff and conditionClose and strategy.position_size<0
     [c_SC]
     
 
@@ -89,6 +96,7 @@ if (inDateRange)
     if (longCondition)
         strategy.close("Short")
         strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage)
+        state:=-1
     if (closeLongCondition)
         strategy.close("Long")
     if (shortCondition)
@@ -96,3 +104,4 @@ if (inDateRange)
         strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage)
     if (closeShortCondition)
         strategy.close("Short")
+        state:=1

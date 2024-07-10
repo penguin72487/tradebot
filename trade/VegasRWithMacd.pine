@@ -1,0 +1,98 @@
+//@version=5
+strategy("VegasRWithMacd.pine", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.05,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(0) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+PMA12 = input.source(close, title="PMA12")
+PMA144 = input.source(close, title="PMA144")
+PMA169 = input.source(close, title="PMA169")
+PMA576 = input.source(close, title="PMA576")
+PMA676 = input.source(close, title="PMA676")
+
+MACD = input.source(close, title="MACD")
+MACDsignal = input.source(close, title="MACDsignal")
+
+
+
+
+
+var prev_PMA12 = 0.0
+var prev_PMA144 = 0.0
+var prev_PMA169 = 0.0
+var prev_PMA576 = 0.0
+var prev_PMA676 = 0.0
+
+PMA12diff = PMA12 - prev_PMA12//Differentia
+PMA144diff = PMA144 - prev_PMA144
+PMA169diff = PMA169 - prev_PMA169
+PMA576diff = PMA576 - prev_PMA576
+PMA676diff = PMA676 - prev_PMA676
+
+prev_PMA12 := PMA12
+prev_PMA144 := PMA144
+prev_PMA169 := PMA169
+prev_PMA576 := PMA576
+prev_PMA676 := PMA676
+
+MACD_Signal = MACD - MACDsignal
+
+
+// 進場條件
+long_InitCondition() =>
+    conditionClose = close > PMA12 and close > PMA144 and close > PMA169 and close > PMA576 and close > PMA676
+    conditionDiff = PMA12diff>0 and PMA144diff>0 and PMA169diff>0 and PMA576diff>0 and PMA676diff>0
+    long_IC = conditionClose and conditionDiff and strategy.position_size==0 and MACD>MACDsignal
+    [long_IC]
+
+
+close_LongCondition() =>
+    conditionClose = close < PMA12 
+    c_LC = conditionClose and strategy.position_size>0 and MACD<MACDsignal
+    [c_LC]
+    
+// addLong_Condition() =>
+
+
+
+short_InitCondition() =>
+    conditionClose = close < PMA12 and close < PMA144 and close < PMA169 and close < PMA576 and close < PMA676
+    conditionDiff = PMA12diff<0 and PMA144diff<0 and PMA169diff<0 and PMA576diff<0 and PMA676diff<0
+    short_IC = conditionClose and conditionDiff and strategy.position_size==0
+    [short_IC]
+
+close_ShortCondition() =>
+    conditionClose = close > PMA12
+    c_SC = conditionClose and strategy.position_size<0 and MACD>MACDsignal
+    [c_SC]
+    
+
+leverage = input(1, "Leverage")
+
+
+[longCondition] = long_InitCondition()
+[closeLongCondition] = close_LongCondition()
+[shortCondition] = short_InitCondition()
+[closeShortCondition] = close_ShortCondition()
+
+if (inDateRange)
+    if (longCondition)
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage)
+    if (closeLongCondition)
+        strategy.close("Long")
+    if (shortCondition)
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage)
+    if (closeShortCondition)
+        strategy.close("Short")

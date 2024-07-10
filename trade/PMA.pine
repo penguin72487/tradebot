@@ -64,8 +64,8 @@ def_fn = input.string(title='Default moving average', defval='EMA', options=['AL
 ma1_on = input.bool(inline='MA1', title='Enable moving average 1', defval=true)
 ma2_on = input.bool(inline='MA2', title='Enable moving average 2', defval=true)
 ma3_on = input.bool(inline='MA3', title='Enable moving average 3', defval=true)
-ma4_on = input.bool(inline='MA4', title='Enable moving average 4', defval=true)
-ma5_on = input.bool(inline='MA5', title='Enable moving average 5', defval=true)
+ma4_on = input.bool(inline='MA4', title='Enable moving average 4', defval=false)
+ma5_on = input.bool(inline='MA5', title='Enable moving average 5', defval=false)
 ma6_on = input.bool(inline='MA6', title='Enable moving average 6', defval=true)
 ma7_on = input.bool(inline='MA7', title='Enable moving average 7', defval=true)
 
@@ -373,22 +373,33 @@ if ma7_fn != 'default'  // if MA7 does not use default function
         ma7 := ta.wma(ma7_src, ma7_len)
         ma7_has_len := true
 
-// Plot MA curves
-p1 = plot(series=ma1_on ? ma1 : na, color=ma1_clr, trackprice=false, offset=ma1_plt_offst,title = "PMA12")
-p2 = plot(series=ma2_on ? ma2 : na, color=ma2_clr, trackprice=false, offset=ma2_plt_offst,title = "PMA144")
-p3 = plot(series=ma3_on ? ma3 : na, color=ma3_clr, trackprice=false, offset=ma3_plt_offst,title = "PMA169")
-p4 = plot(series=ma4_on ? ma4 : na, color=ma4_clr, trackprice=false, offset=ma4_plt_offst,title = "PMA288")
-p5 = plot(series=ma5_on ? ma5 : na, color=ma5_clr, trackprice=false, offset=ma5_plt_offst,title = "PMA338")
-p6 = plot(series=ma6_on ? ma6 : na, color=ma6_clr, trackprice=false, offset=ma6_plt_offst,title = "PMA576")
-p7 = plot(series=ma7_on ? ma7 : na, color=ma7_clr, trackprice=false, offset=ma7_plt_offst,title = "PMA676")
+// 計算與前一根K線的差值
+delta_ma1 = na(ma1[1]) ? na : ma1 - ma1[1]
+delta_ma2 = na(ma2[1]) ? na : ma2 - ma2[1]
+delta_ma3 = na(ma3[1]) ? na : ma3 - ma3[1]
+delta_ma4 = na(ma4[1]) ? na : ma4 - ma4[1]
+delta_ma5 = na(ma5[1]) ? na : ma5 - ma5[1]
+delta_ma6 = na(ma6[1]) ? na : ma6 - ma6[1]
+delta_ma7 = na(ma7[1]) ? na : ma7 - ma7[1]
 
-// Background fills between MAs
-fill(p1, p2, color.new((ma1 > ma2 ? ma1_clr : ma2_clr), (ma1_on and ma2_on and fill_12_on ? fill_12_trans : 100)))
-fill(p2, p3, color.new((ma2 > ma3 ? ma2_clr : ma3_clr), (ma2_on and ma3_on and fill_23_on ? fill_23_trans : 100)))
-fill(p3, p4, color.new((ma3 > ma4 ? ma3_clr : ma4_clr), (ma3_on and ma4_on and fill_34_on ? fill_34_trans : 100)))
-fill(p4, p5, color.new((ma4 > ma5 ? ma4_clr : ma5_clr), (ma4_on and ma5_on and fill_45_on ? fill_45_trans : 100)))
-fill(p5, p6, color.new((ma5 > ma6 ? ma5_clr : ma6_clr), (ma5_on and ma6_on and fill_56_on ? fill_56_trans : 100)))
-fill(p6, p7, color.new((ma6 > ma7 ? ma6_clr : ma7_clr), (ma6_on and ma7_on and fill_67_on ? fill_67_trans : 100)))
+// Plot MA curves
+// Plot MA curves with adjusted color based on delta
+p1 = plot(series=ma1_on ? ma1 : na, color=(delta_ma1 >= 0 ? color.new(ma1_clr, 0) : color.new(ma1_clr, 45)), trackprice=false, offset=ma1_plt_offst,title = "PMA12")
+p2 = plot(series=ma2_on ? ma2 : na, color=(delta_ma2 >= 0 ? color.new(ma2_clr, 45) : color.new(ma2_clr, 90)), trackprice=false, offset=ma2_plt_offst,title = "PMA144")
+p3 = plot(series=ma3_on ? ma3 : na, color=(delta_ma3 >= 0 ? color.new(ma3_clr, 45) : color.new(ma3_clr, 90)), trackprice=false, offset=ma3_plt_offst,title = "PMA169")
+p4 = plot(series=ma4_on ? ma4 : na, color=(delta_ma4 >= 0 ? color.new(ma4_clr, 45) : color.new(ma4_clr, 90)), trackprice=false, offset=ma4_plt_offst,title = "PMA288")
+p5 = plot(series=ma5_on ? ma5 : na, color=(delta_ma5 >= 0 ? color.new(ma5_clr, 45) : color.new(ma5_clr, 90)), trackprice=false, offset=ma5_plt_offst,title = "PMA338")
+p6 = plot(series=ma6_on ? ma6 : na, color=(delta_ma6 >= 0 ? color.new(ma6_clr, 45) : color.new(ma6_clr, 90)), trackprice=false, offset=ma6_plt_offst,title = "PMA576")
+p7 = plot(series=ma7_on ? ma7 : na, color=(delta_ma7 >= 0 ? color.new(ma7_clr, 45) : color.new(ma7_clr, 90)), trackprice=false, offset=ma7_plt_offst,title = "PMA676")
+
+
+// Background fills between MAs with adjusted color based on delta and fill_XX_on
+fill(p1, p2, color.new((ma1 > ma2 ? ma1_clr : ma2_clr), (ma1_on and ma2_on and fill_12_on ? (delta_ma1 >= 0 and delta_ma2 >= 0 ? fill_12_trans : 90) : 100)))
+fill(p2, p3, color.new((ma2 > ma3 ? ma2_clr : ma3_clr), (ma2_on and ma3_on and fill_23_on ? (delta_ma2 >= 0 and delta_ma3 >= 0 ? fill_23_trans : 90) : 100)))
+fill(p3, p4, color.new((ma3 > ma4 ? ma3_clr : ma4_clr), (ma3_on and ma4_on and fill_34_on ? (delta_ma3 >= 0 and delta_ma4 >= 0 ? fill_34_trans : 90) : 100)))
+fill(p4, p5, color.new((ma4 > ma5 ? ma4_clr : ma5_clr), (ma4_on and ma5_on and fill_45_on ? (delta_ma4 >= 0 and delta_ma5 >= 0 ? fill_45_trans : 90) : 100)))
+fill(p5, p6, color.new((ma5 > ma6 ? ma5_clr : ma6_clr), (ma5_on and ma6_on and fill_56_on ? (delta_ma5 >= 0 and delta_ma6 >= 0 ? fill_56_trans : 90) : 100)))
+fill(p6, p7, color.new((ma6 > ma7 ? ma6_clr : ma7_clr), (ma6_on and ma7_on and fill_67_on ? (delta_ma6 >= 0 and delta_ma7 >= 0 ? fill_67_trans : 90) : 100)))
 
 // MAs last price lines
 if ma1_on and ma1_price_line_on

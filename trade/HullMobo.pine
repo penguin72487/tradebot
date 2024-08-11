@@ -1,0 +1,51 @@
+//@version=5
+strategy("HullMobo", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity,process_orders_on_close=true ,default_qty_value=10,commission_value=0.05,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(0) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+ema200 = ta.ema(close, 200)
+
+MHULL = input.source(close, title="MHULL")
+SHULL = input.source(close, title="SHULL")
+
+MoboBuy = input.source(close, title="MoboBuy Arrow")
+MoboSell = input.source(close, title="MoboSell Arrow")
+
+longcondition = MHULL > SHULL and not na(MoboBuy) and close > open and close > ema200
+shortcondition = MHULL < SHULL and not na(MoboSell) and close < open and close < ema200
+
+WLRatio = input(1.5, title="Win/Loss Ratio take profit")
+
+var takePrice = 0.0
+var stopPrice = 0.0
+
+if (inDateRange)
+    if (longcondition)
+        strategy.entry("Long", strategy.long)
+        takePrice := close + (close - SHULL) * WLRatio
+        stopPrice := SHULL
+    if (shortcondition)
+        strategy.entry("Short", strategy.short)
+        takePrice := close - (MHULL - close) * WLRatio
+        stopPrice := MHULL
+
+if (strategy.position_size > 0)
+    // stopPrice :=SHULL
+    strategy.exit("Take Profit/Stop Loss", "Long", limit=takePrice, stop=stopPrice)
+
+if (strategy.position_size < 0)
+    // stopPrice :=MHULL
+    strategy.exit("Take Profit/Stop Loss", "Short", limit=takePrice, stop=stopPrice)
+    
+

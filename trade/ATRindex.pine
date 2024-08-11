@@ -1,0 +1,34 @@
+//@version=5
+indicator(title='ART ling', shorttitle='PMA', overlay=true)
+
+// Input parameters
+ATR_length = input(144, title="ATR Length")
+ATR_Diff = input(0.5, title="ATR Diff")
+
+// Calculate ATR
+ATR = ta.atr(ATR_length)
+
+// Plot +ATR Diff lines with offset 1
+plot(close[1] + 0* ATR_Diff * ATR, color=color.green, title="ATR Diff +0", offset=1)
+plot(close[1] + 1* ATR_Diff * ATR, color=color.green, title="ATR Diff +1", offset=1)
+plot(close[1] + 2* ATR_Diff * ATR, color=color.green, title="ATR Diff +2", offset=1)
+plot(close[1] + 3* ATR_Diff * ATR, color=color.green, title="ATR Diff +3", offset=1)
+plot(close[1] + 4* ATR_Diff * ATR, color=color.green, title="ATR Diff +4", offset=1)
+plot(close[1] + 5* ATR_Diff * ATR, color=color.green, title="ATR Diff +5", offset=1)
+plot(close[1] + 6* ATR_Diff * ATR, color=color.green, title="ATR Diff +6", offset=1)
+plot(close[1] + 7* ATR_Diff * ATR, color=color.green, title="ATR Diff +7", offset=1)
+plot(close[1] + 8* ATR_Diff * ATR, color=color.green, title="ATR Diff +8", offset=1)
+plot(close[1] + 9* ATR_Diff * ATR, color=color.green, title="ATR Diff +9", offset=1)
+
+// Plot -ATR Diff lines with offset 1
+// plot(close[1] - 0* ATR_Diff * ATR, color=color.red, title="ATR Diff -0", offset=1)
+plot(close[1] - 1* ATR_Diff * ATR, color=color.red, title="ATR Diff -1", offset=1)
+plot(close[1] - 2* ATR_Diff * ATR, color=color.red, title="ATR Diff -2", offset=1)
+plot(close[1] - 3* ATR_Diff * ATR, color=color.red, title="ATR Diff -3", offset=1)
+plot(close[1] - 4* ATR_Diff * ATR, color=color.red, title="ATR Diff -4", offset=1)
+plot(close[1] - 5* ATR_Diff * ATR, color=color.red, title="ATR Diff -5", offset=1)
+plot(close[1] - 6* ATR_Diff * ATR, color=color.red, title="ATR Diff -6", offset=1)
+plot(close[1] - 7* ATR_Diff * ATR, color=color.red, title="ATR Diff -7", offset=1)
+plot(close[1] - 8* ATR_Diff * ATR, color=color.red, title="ATR Diff -8", offset=1)
+plot(close[1] - 9* ATR_Diff * ATR, color=color.red, title="ATR Diff -9", offset=1)
+

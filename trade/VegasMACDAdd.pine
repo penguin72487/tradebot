@@ -119,10 +119,10 @@ if (inDateRange)
     switch state
         0 =>
             if longLeftArrangement
-                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 Long")
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 left Long")
                 state := 1
             if(longRightArrangement)
-                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 Long")
+                strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage, comment="state 0 Right Long")
                 state := 2
             if shortLeftArrangement
                 strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage, comment="state 0 Short")

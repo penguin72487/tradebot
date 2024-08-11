@@ -1,0 +1,69 @@
+//@version=5
+strategy("ATRbot", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity,process_orders_on_close=true ,default_qty_value=10,commission_value=0.05,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(0) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+// Input parameters
+ATR_length = input(144, title="ATR Length")
+ATR_Diff = input(0.5, title="ATR Diff")
+leverage = input(1, title="Leverage")
+// Calculate ATR
+ATR = ta.atr(ATR_length)
+
+var last_ATRLevel = 0.0
+
+now_ATRLevel = (close - close[1]) / ATR
+
+
+i = (now_ATRLevel - last_ATRLevel)/ATR_Diff
+
+last_ATRLevel := now_ATRLevel
+
+
+if(inDateRange)
+    if(i < 0)
+        strategy.entry("Long", strategy.long, qty=strategy.equity/close*leverage*math.abs(i))
+
+    if(i > 0)
+        strategy.entry("Short", strategy.short, qty=strategy.equity/close*leverage*math.abs(i))
+
+
+
+plot (last_ATRLevel, color=color.red, title="ATR Level")
+plot (now_ATRLevel, color=color.green, title="Now ATR Level")
+
+// Plot +ATR Diff lines with offset 1
+plot(close[1] + 0* ATR_Diff * ATR, color=color.green, title="ATR Diff +0", offset=1)
+plot(close[1] + 1* ATR_Diff * ATR, color=color.green, title="ATR Diff +1", offset=1)
+plot(close[1] + 2* ATR_Diff * ATR, color=color.green, title="ATR Diff +2", offset=1)
+plot(close[1] + 3* ATR_Diff * ATR, color=color.green, title="ATR Diff +3", offset=1)
+plot(close[1] + 4* ATR_Diff * ATR, color=color.green, title="ATR Diff +4", offset=1)
+plot(close[1] + 5* ATR_Diff * ATR, color=color.green, title="ATR Diff +5", offset=1)
+plot(close[1] + 6* ATR_Diff * ATR, color=color.green, title="ATR Diff +6", offset=1)
+plot(close[1] + 7* ATR_Diff * ATR, color=color.green, title="ATR Diff +7", offset=1)
+plot(close[1] + 8* ATR_Diff * ATR, color=color.green, title="ATR Diff +8", offset=1)
+plot(close[1] + 9* ATR_Diff * ATR, color=color.green, title="ATR Diff +9", offset=1)
+
+// Plot -ATR Diff lines with offset 1
+// plot(close[1] - 0* ATR_Diff * ATR, color=color.red, title="ATR Diff -0", offset=1)
+plot(close[1] - 1* ATR_Diff * ATR, color=color.red, title="ATR Diff -1", offset=1)
+plot(close[1] - 2* ATR_Diff * ATR, color=color.red, title="ATR Diff -2", offset=1)
+plot(close[1] - 3* ATR_Diff * ATR, color=color.red, title="ATR Diff -3", offset=1)
+plot(close[1] - 4* ATR_Diff * ATR, color=color.red, title="ATR Diff -4", offset=1)
+plot(close[1] - 5* ATR_Diff * ATR, color=color.red, title="ATR Diff -5", offset=1)
+plot(close[1] - 6* ATR_Diff * ATR, color=color.red, title="ATR Diff -6", offset=1)
+plot(close[1] - 7* ATR_Diff * ATR, color=color.red, title="ATR Diff -7", offset=1)
+plot(close[1] - 8* ATR_Diff * ATR, color=color.red, title="ATR Diff -8", offset=1)
+plot(close[1] - 9* ATR_Diff * ATR, color=color.red, title="ATR Diff -9", offset=1)
+

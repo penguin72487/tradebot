@@ -14,22 +14,38 @@ timelock = input(bool(0) ,"Time lock")
 // 判斷當前條是否在指定的時間範圍內
 inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
-ema200 = ta.ema(close, 200)
-
 MHULL = input.source(close, title="MHULL")
 SHULL = input.source(close, title="SHULL")
+
+
 
 MoboBuy = input.source(close, title="MoboBuy Arrow")
 MoboSell = input.source(close, title="MoboSell Arrow")
 
-longcondition = MHULL > SHULL and not na(MoboBuy) and close > open and close > ema200
-shortcondition = MHULL < SHULL and not na(MoboSell) and close < open and close < ema200
+QQELine = input.source(close, title="QQELine")
+QQEUP = input.source(close, title="QQE UP")
+QQEDOWN = input.source(close, title="QQE DOWN")
+
+
+
+var takePrice = 0.0
+var stopPrice = 0.0
+
+var QQEState = 0
+
+longcondition = not na(MoboBuy) and not (QQEState== 1) and not na(QQEUP) and close > MHULL
+shortcondition = not na(MoboSell) and not(QQEState== -1) and not na(QQEDOWN) and close < SHULL
 
 
 WLRatio = input(1.5, title="Win/Loss Ratio take profit")
 
-var takePrice = 0.0
-var stopPrice = 0.0
+if not na(QQEUP)
+    QQEState := 1
+if not na(QQEDOWN)
+    QQEState := -1
+
+if na(QQEUP) and na(QQEDOWN)
+    QQEState := 0
 
 if (inDateRange)
     if (longcondition)
@@ -43,10 +59,15 @@ if (inDateRange)
 
 if (strategy.position_size > 0)
     // stopPrice :=SHULL
-    strategy.exit("Take Profit/Stop Loss", "Long", limit=takePrice, stop=stopPrice)
+    strategy.exit("Take Profit", "Long", limit=takePrice, qty_percent=50)
+    strategy.exit("Stop Loss", "Long", stop=stopPrice)
+    if(not na(QQEDOWN))
+        strategy.close("Long")
 
 if (strategy.position_size < 0)
     // stopPrice :=MHULL
-    strategy.exit("Take Profit/Stop Loss", "Short", limit=takePrice, stop=stopPrice)
-    
+    strategy.exit("Take Profit", "Short", limit=takePrice, qty_percent=50)
+    strategy.exit("Stop Loss", "Short", stop=stopPrice)
+    if(not na(QQEUP))
+        strategy.close("Short")
 

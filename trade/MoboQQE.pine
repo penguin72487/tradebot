@@ -70,4 +70,3 @@ if (strategy.position_size < 0)
     strategy.exit("Stop Loss", "Short", stop=stopPrice)
     if(not na(QQEUP))
         strategy.close("Short")
-

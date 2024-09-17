@@ -14,8 +14,8 @@ timelock = input(bool(0) ,"Time lock")
 // 判斷當前條是否在指定的時間範圍內
 inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
-MHULL = input.source(close, title="MHULL")
-SHULL = input.source(close, title="SHULL")
+ATRShortStopLoss = input.source(close, title="ATRShortStopLoss")
+ATRLongStopLoss = input.source(close, title="ATR Long Stop Loss")
 
 
 
@@ -47,9 +47,9 @@ pev_MoboBuy := MoboBuy
 pev_MoboSell := MoboSell
 
 
-takeProfitPercent = input(50.0, title="Take Profit Percent")/100
+takeProfitPercent = input(50.0, title="Take Profit Percent")
 WLRatio = input(1.5, title="Win/Loss Ratio take profit")
-KellyEnable = bool(input(1 ,title="Kelly Formula"))
+KellyEnable = input(false, title="Kelly Enable")
 //Kelly_Formula
 winRate = input(50.0, title="Win Rate")/100
 kelly_formula(winRate,profitRatio, winlossratio) =>
@@ -71,27 +71,35 @@ if (inDateRange and strategy.equity > 0)
 
     if (longcondition)
         strategy.close("Short")
-        takePrice := close + (close - SHULL) * WLRatio
-        stopPrice := SHULL
-        strategy.entry("Long", strategy.long, qty= strategy.default_entry_qty(close)*kelly_formula(winRate, takePrice/close-1, 1-stopPrice/close))
-
+        takePrice := close + (close - ATRLongStopLoss) * WLRatio
+        stopPrice := ATRLongStopLoss
+        strategy.entry("Long", strategy.long,stop=stopPrice,limit=takePrice)
+        // strategy.exit("Stop Loss", "Long", stop=stopPrice, comment="Long Stop Loss")
     if (shortcondition)
         strategy.close("Long")
-        takePrice := close - (MHULL - close) * WLRatio
-        stopPrice := MHULL
-        strategy.entry("Short", strategy.short, qty= strategy.default_entry_qty(close)*kelly_formula(winRate,1- close/takePrice-1, 1-close/stopPrice))
+        takePrice := close - (ATRShortStopLoss - close) * WLRatio
+        stopPrice := ATRShortStopLoss
+        strategy.entry("Short", strategy.short,stop=stopPrice,limit=takePrice)
+        // strategy.exit("Stop Loss", "Short", stop=stopPrice, comment="Short Stop Loss")
 
-if (strategy.position_size > 0)
-    // stopPrice :=SHULL
-    strategy.exit("Take Profit", "Long", limit=takePrice, qty_percent=takeProfitPercent)
-    strategy.exit("Stop Loss", "Long", stop=stopPrice)
-    // if(not na(QQEDOWN))
-    //     strategy.close("Long")
+// if (strategy.position_size > 0)
+//     // stopPrice :=ATRLongStopLoss
+//     strategy.exit("Take Profit", "Long", limit=takePrice, qty_percent=takeProfitPercent, comment="Long Take Profit")
+//     strategy.exit("Stop Loss", "Long", stop=stopPrice, comment="Long Stop Loss")
+//     // if(not na(QQEDOWN))
+//     //     strategy.close("Long")
 
-if (strategy.position_size < 0)
-    // stopPrice :=MHULL
-    strategy.exit("Take Profit", "Short", limit=takePrice, qty_percent=takeProfitPercent)
-    strategy.exit("Stop Loss", "Short", stop=stopPrice)
-    // if(not na(QQEUP))
-    //     strategy.close("Short")
+// if (strategy.position_size < 0)
+//     // stopPrice :=ATRShortStopLoss
+//     strategy.exit("Take Profit", "Short", limit=takePrice, qty_percent=takeProfitPercent, comment="Short Take Profit")
+//     strategy.exit("Stop Loss", "Short", stop=stopPrice, comment="Short Stop Loss")
+//     // if(not na(QQEUP))
+//     //     strategy.close("Short")
+
+if(strategy.position_size ==0)
+    takePrice := na
+    stopPrice := na
+
+plot(na(stopPrice)? na: stopPrice, color=color.red, title="Stop Price")
+plot(na(takePrice)? na: takePrice, color=color.green, title="Take Price")
 

@@ -49,12 +49,13 @@ WLRatio = input(1.5, title="Win/Loss Ratio take profit")
 KellyEnable = input(false, title="Kelly Enable")
 //Kelly_Formula
 winRate = input(50.0, title="Win Rate")/100
+leverage = input(1.0, title="Leverage")
 kelly_formula(winRate,profitRatio, winlossratio) =>
     f = winRate/winlossratio - (1-winRate)/ profitRatio
     if(f<0)
         f:=0
     if(KellyEnable)
-        f/100
+        f/100 * leverage
     else
         strategy.default_entry_qty(close)
         

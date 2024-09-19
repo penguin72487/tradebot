@@ -50,7 +50,7 @@ KellyEnable = input(false, title="Kelly Enable")
 //Kelly_Formula
 winRate = input(50.0, title="Win Rate")/100
 kelly_formula(winRate,profitRatio, winlossratio) =>
-    f = winRate/profitRatio - (1-winRate)/winlossratio
+    f = winRate/winlossratio - (1-winRate)/ profitRatio
     if(f<0)
         f:=0
     if(KellyEnable)

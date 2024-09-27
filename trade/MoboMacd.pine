@@ -1,23 +1,21 @@
 //@version=5
-strategy("MoboMacd", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity,process_orders_on_close=true ,default_qty_value=10,commission_value=0.05,initial_capital=1000)
+strategy("MoboMacd", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
-startDay = input(15, "Start Day")//50
+startDay = input(15, "Start Day")
 endYear = year(timenow)
 endMonth = month(timenow)
 endDay = dayofmonth(timenow)
 startTime = timestamp(startYear, startMonth, startDay, 00, 00)
 endTime = timestamp(endYear, endMonth, endDay, 23, 59)
-timelock = input(bool(0) ,"Time lock")
+timelock = input(bool(0), "Time lock")
 
 // 判斷當前條是否在指定的時間範圍內
-inDateRange = time >= startTime and time <= endTime or (not timelock) 
+inDateRange = time >= startTime and time <= endTime or (not timelock)
 
 ATRShortStopLoss = input.source(close, title="ATRShortStopLoss")
 ATRLongStopLoss = input.source(close, title="ATR Long Stop Loss")
-
-
 
 MoboBuy = input.source(close, title="MoboBuy Arrow")
 MoboSell = input.source(close, title="MoboSell Arrow")
@@ -25,7 +23,6 @@ MoboSell = input.source(close, title="MoboSell Arrow")
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
 MACDcross = input.source(close, title="MACDcross")
-
 
 var takePrice = 0.0
 var stopPrice = 0.0
@@ -38,31 +35,20 @@ var pev_MoboSell = 0.0
 longcondition = MACD > MACDsignal and not na(MACDcross) and (not na(MoboBuy) or not na(pev_MoboBuy))
 shortcondition = MACD < MACDsignal and not na(MACDcross) and (not na(MoboSell) or not na(pev_MoboSell))
 
-
-
 pev_MoboBuy := MoboBuy
 pev_MoboSell := MoboSell
-
 
 takeProfitPercent = input(50.0, title="Take Profit Percent")
 WLRatio = input(1.5, title="Win/Loss Ratio take profit")
 KellyEnable = input(false, title="Kelly Enable")
-//Kelly_Formula
-winRate = input(50.0, title="Win Rate")/100
+
+// Kelly Formula
+winRate = input(50.0, title="Win Rate") / 100
 leverage = input(1.0, title="Leverage")
-kelly_formula(winRate,profitRatio, winlossratio) =>
-    f = winRate/winlossratio - (1-winRate)/ profitRatio
-    if(f<0)
-        f:=0
-    if(KellyEnable)
-        f/100 * leverage
-    else
-        strategy.default_entry_qty(close)
-        
-    
-
-
-
+kelly_formula(winRate, profitRatio, winlossratio) =>
+    f = winRate / winlossratio - (1 - winRate) / profitRatio
+    kelly_position = math.max(f, 0.0) // 確保不會低於 0
+    KellyEnable ? kelly_position * leverage : leverage
 
 var mealymoodle = 0 // 0: none, 1: long, 2: long Take Profit, 3: move stop loss, -1: short, -2: short Take Profit, -3: move stop loss
 
@@ -75,22 +61,22 @@ if (inDateRange and strategy.equity > 0)
             strategy.close("Long")
             strategy.close("Short")
             if (longcondition)
-                strategy.entry("Long", strategy.long, qty=strategy.equity*kelly_formula(winRate, takePrice/close-1, 1-stopPrice/close))
+                strategy.entry("Long", strategy.long, qty=strategy.equity * kelly_formula(winRate, takePrice / close - 1, 1 - stopPrice / close) / close)
                 mealymoodle := 1
                 stopPrice := ATRLongStopLoss
                 stopPriceUnit := close - ATRLongStopLoss
                 takePrice := close + stopPriceUnit * WLRatio
                 moveStopPrice := close + stopPriceUnit * 2
             if (shortcondition)
-                strategy.entry("Short", strategy.short, qty=strategy.equity*kelly_formula(winRate, 1-takePrice/close, stopPrice/close-1))
+                strategy.entry("Short", strategy.short, qty=strategy.equity * kelly_formula(winRate, 1 - takePrice / close, stopPrice / close - 1) / close)
                 mealymoodle := -1
                 stopPrice := ATRShortStopLoss
                 stopPriceUnit := ATRShortStopLoss - close
                 takePrice := close - stopPriceUnit * WLRatio
                 moveStopPrice := close - stopPriceUnit * 2
         1 => 
-            strategy.exit("Take Profit", from_entry="Long", limit=takePrice, qty_percent= takeProfitPercent)
-            strategy.exit("Stop Loss", from_entry="Long", limit=stopPrice)
+            strategy.exit("Long Take Profit", from_entry="Long", limit=takePrice,qty_percent=takeProfitPercent)
+            strategy.exit("Long Stop Loss", from_entry="Long", stop=stopPrice)
             if high > moveStopPrice
                 stopPrice := moveStopPrice - stopPriceUnit
                 moveStopPrice := moveStopPrice + stopPriceUnit
@@ -101,10 +87,14 @@ if (inDateRange and strategy.equity > 0)
                 strategy.close("Long")
                 mealymoodle := 0
             if (shortcondition)
-                strategy.close("Long")
+                strategy.entry("Short", strategy.short, qty=strategy.equity * kelly_formula(winRate, 1 - takePrice / close, stopPrice / close - 1) / close)
                 mealymoodle := -1
+                stopPrice := ATRShortStopLoss
+                stopPriceUnit := ATRShortStopLoss - close
+                takePrice := close - stopPriceUnit * WLRatio
+                moveStopPrice := close - stopPriceUnit * 2
         2 => 
-            strategy.exit("Stop Loss", from_entry="Long", limit=stopPrice)
+            strategy.exit("Long Stop Loss", from_entry="Long", stop=stopPrice)
             if high > moveStopPrice
                 stopPrice := moveStopPrice - stopPriceUnit
                 moveStopPrice := moveStopPrice + stopPriceUnit
@@ -113,10 +103,14 @@ if (inDateRange and strategy.equity > 0)
                 strategy.close("Long")
                 mealymoodle := 0
             if (shortcondition)
-                strategy.close("Long")
+                strategy.entry("Short", strategy.short, qty=strategy.equity * kelly_formula(winRate, 1 - takePrice / close, stopPrice / close - 1) / close)
                 mealymoodle := -1
+                stopPrice := ATRShortStopLoss
+                stopPriceUnit := ATRShortStopLoss - close
+                takePrice := close - stopPriceUnit * WLRatio
+                moveStopPrice := close - stopPriceUnit * 2
         3 =>
-            strategy.exit("Stop Loss", from_entry="Long", limit=stopPrice)
+            strategy.exit("Long Stop Loss", from_entry="Long", stop=stopPrice)
             if high > moveStopPrice
                 stopPrice := moveStopPrice - stopPriceUnit
                 moveStopPrice := moveStopPrice + stopPriceUnit
@@ -125,11 +119,16 @@ if (inDateRange and strategy.equity > 0)
                 strategy.close("Long")
                 mealymoodle := 0
             if (shortcondition)
-                strategy.close("Long")
+                strategy.entry("Short", strategy.short, qty=strategy.equity * kelly_formula(winRate, 1 - takePrice / close, stopPrice / close - 1) / close)
                 mealymoodle := -1
+                stopPrice := ATRShortStopLoss
+                stopPriceUnit := ATRShortStopLoss - close
+                takePrice := close - stopPriceUnit * WLRatio
+                moveStopPrice := close - stopPriceUnit * 2
         -1 =>
-            strategy.exit("Take Profit", from_entry="Short", limit=takePrice,  qty_percent= takeProfitPercent)
-            strategy.exit("Stop Loss", from_entry="Short", limit=stopPrice)
+            strategy.exit("Short Take Profit", from_entry="Short", limit=takePrice, qty_percent=takeProfitPercent)
+            strategy.exit("Short Stop Loss", from_entry="Short", stop=stopPrice)
+
             if low < moveStopPrice
                 stopPrice := moveStopPrice + stopPriceUnit
                 moveStopPrice := moveStopPrice - stopPriceUnit
@@ -141,9 +140,14 @@ if (inDateRange and strategy.equity > 0)
                 mealymoodle := 0
             if (longcondition)
                 strategy.close("Short")
+                strategy.entry("Long", strategy.long, qty=strategy.equity * kelly_formula(winRate, takePrice / close - 1, 1 - stopPrice / close) / close)
                 mealymoodle := 1
+                stopPrice := ATRLongStopLoss
+                stopPriceUnit := close - ATRLongStopLoss
+                takePrice := close + stopPriceUnit * WLRatio
+                moveStopPrice := close + stopPriceUnit * 2
         -2 =>
-            strategy.exit("Stop Loss", from_entry="Short", limit=stopPrice)
+            strategy.exit("Short Stop Loss", from_entry="Short", stop=stopPrice)
             if low < moveStopPrice
                 stopPrice := moveStopPrice + stopPriceUnit
                 moveStopPrice := moveStopPrice - stopPriceUnit
@@ -153,9 +157,14 @@ if (inDateRange and strategy.equity > 0)
                 mealymoodle := 0
             if (longcondition)
                 strategy.close("Short")
+                strategy.entry("Long", strategy.long, qty=strategy.equity * kelly_formula(winRate, takePrice / close - 1, 1 - stopPrice / close) / close)
                 mealymoodle := 1
+                stopPrice := ATRLongStopLoss
+                stopPriceUnit := close - ATRLongStopLoss
+                takePrice := close + stopPriceUnit * WLRatio
+                moveStopPrice := close + stopPriceUnit * 2
         -3 =>
-            strategy.exit("Stop Loss", from_entry="Long", limit=stopPrice)
+            strategy.exit("Short Stop Loss", from_entry="Short", stop=stopPrice)
             if low < moveStopPrice
                 stopPrice := moveStopPrice + stopPriceUnit
                 moveStopPrice := moveStopPrice - stopPriceUnit
@@ -164,13 +173,18 @@ if (inDateRange and strategy.equity > 0)
                 strategy.close("Short")
                 mealymoodle := 0
             if (longcondition)
-                strategy.close("Short")
+                strategy.entry("Long", strategy.long, qty=strategy.equity * kelly_formula(winRate, takePrice / close - 1, 1 - stopPrice / close) / close)
                 mealymoodle := 1
+                stopPrice := ATRLongStopLoss
+                stopPriceUnit := close - ATRLongStopLoss
+                takePrice := close + stopPriceUnit * WLRatio
+                moveStopPrice := close + stopPriceUnit * 2
 
-            
+plot(na(takePrice) ? na : takePrice, color=color.green, title="Take Price", style=plot.style_linebr)
+plot(na(stopPrice) ? na : stopPrice, color=color.red, title="Stop Price", style=plot.style_linebr)
+plot(na(moveStopPrice) ? na : moveStopPrice, color=color.blue, title="Move Stop Price", style=plot.style_linebr)
 
-
-plot(na(takePrice)? na: takePrice, color=color.green, title="Take Price", style=plot.style_linebr)
-plot(na(stopPrice)? na: stopPrice, color=color.red, title="Stop Price", style=plot.style_linebr)
-plot(na(moveStopPrice)? na: moveStopPrice, color=color.blue, title="Move Stop Price", style=plot.style_linebr)
+plot(mealymoodle, color=color.red, title="mealymoodle", style=plot.style_linebr)
+plot(KellyEnable? kelly_formula(winRate, takePrice/close-1, 1-stopPrice/close): na, color=color.red, title="Kelly Long")
+plot(KellyEnable? kelly_formula(winRate, 1-takePrice/close, stopPrice/close-1): na, color=color.red, title="Kelly Short")
 

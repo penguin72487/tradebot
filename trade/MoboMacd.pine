@@ -1,9 +1,9 @@
 //@version=5
-strategy("MoboMacd", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity,process_orders_on_close=true ,default_qty_value=10,commission_value=0.05,initial_capital=1000)
+strategy("MoboMacd", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
-startDay = input(15, "Start Day")//50
+startDay = input(15, "Start Day")
 endYear = year(timenow)
 endMonth = month(timenow)
 endDay = dayofmonth(timenow)
@@ -14,92 +14,57 @@ timelock = input(bool(0) ,"Time lock")
 // 判斷當前條是否在指定的時間範圍內
 inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
-ATRShortStopLoss = input.source(close, title="ATRShortStopLoss")
-ATRLongStopLoss = input.source(close, title="ATR Long Stop Loss")
+ATRShortStopLoss = input.float(1.0, title="ATR Short Stop Loss Multiplier")
+ATRLongStopLoss = input.float(1.0, title="ATR Long Stop Loss Multiplier")
 
-
-
+// 輸入數據源
 MoboBuy = input.source(close, title="MoboBuy Arrow")
 MoboSell = input.source(close, title="MoboSell Arrow")
-
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
 MACDcross = input.source(close, title="MACDcross")
 
-// QQELine = input.source(close, title="QQELine")
-// QQEUP = input.source(close, title="QQE UP")
-// QQEDOWN = input.source(close, title="QQE DOWN")
+// 變量
+var float takePrice = na
+var float stopPrice = na
+var float pev_MoboBuy = na
+var float pev_MoboSell = na
+ATRLength = input(14, title="ATR Length")
+ATR = ta.atr(ATRLength)
 
-
-
-var takePrice = 0.0
-var stopPrice = 0.0
-
-var pev_MoboBuy = 0.0
-var pev_MoboSell = 0.0
-
-longcondition = MACD > MACDsignal and not na(MACDcross) and (not na(MoboBuy) or not na(pev_MoboBuy)) 
-shortcondition = MACD < MACDsignal and not na(MACDcross) and (not na(MoboSell) or not na(pev_MoboSell))
-
-
+// 進出場條件
+longcondition = MACD > MACDsignal and not na(MACDcross) and (not na(MoboBuy) or not na(pev_MoboBuy)) and strategy.position_size == 0
+shortcondition = MACD < MACDsignal and not na(MACDcross) and (not na(MoboSell) or not na(pev_MoboSell)) and strategy.position_size == 0
 
 pev_MoboBuy := MoboBuy
 pev_MoboSell := MoboSell
 
-
 takeProfitPercent = input(50.0, title="Take Profit Percent")
 WLRatio = input(1.5, title="Win/Loss Ratio take profit")
-KellyEnable = input(false, title="Kelly Enable")
-//Kelly_Formula
-winRate = input(50.0, title="Win Rate")/100
-kelly_formula(winRate,profitRatio, winlossratio) =>
-    f = winRate/profitRatio - (1-winRate)/winlossratio
-    if(f<0)
-        f:=0
-    if(KellyEnable)
-        f
-    else
-        1
-    
-
-
-
-
-
 
 if (inDateRange and strategy.equity > 0)
-
     if (longcondition)
         strategy.close("Short")
-        takePrice := close + (close - ATRLongStopLoss) * WLRatio
-        stopPrice := ATRLongStopLoss
-        strategy.entry("Long", strategy.long,stop=stopPrice,limit=takePrice)
-        // strategy.exit("Stop Loss", "Long", stop=stopPrice, comment="Long Stop Loss")
+        stopPrice := close - ATR * ATRLongStopLoss  // 使用 ATR 來計算止損價
+        takePrice := close + (close - stopPrice) * WLRatio  // 計算獲利目標
+        strategy.entry("Long", strategy.long)
+       
     if (shortcondition)
         strategy.close("Long")
-        takePrice := close - (ATRShortStopLoss - close) * WLRatio
-        stopPrice := ATRShortStopLoss
-        strategy.entry("Short", strategy.short,stop=stopPrice,limit=takePrice)
-        // strategy.exit("Stop Loss", "Short", stop=stopPrice, comment="Short Stop Loss")
+        stopPrice := close + ATR * ATRShortStopLoss  // 使用 ATR 來計算止損價
+        takePrice := close - (stopPrice - close) * WLRatio  // 計算獲利目標
+        strategy.entry("Short", strategy.short)
 
-// if (strategy.position_size > 0)
-//     // stopPrice :=ATRLongStopLoss
-//     strategy.exit("Take Profit", "Long", limit=takePrice, qty_percent=takeProfitPercent, comment="Long Take Profit")
-//     strategy.exit("Stop Loss", "Long", stop=stopPrice, comment="Long Stop Loss")
-//     // if(not na(QQEDOWN))
-//     //     strategy.close("Long")
+// 設置平倉條件
+if (strategy.position_size > 0)
+    strategy.exit("Long Take Profit", "Long", limit=takePrice, stop=stopPrice, comment="Long Take Profit/Stop Loss")
+if (strategy.position_size < 0)
+    strategy.exit("Short Take Profit", "Short", limit=takePrice, stop=stopPrice, comment="Short Take Profit/Stop Loss")
 
-// if (strategy.position_size < 0)
-//     // stopPrice :=ATRShortStopLoss
-//     strategy.exit("Take Profit", "Short", limit=takePrice, qty_percent=takeProfitPercent, comment="Short Take Profit")
-//     strategy.exit("Stop Loss", "Short", stop=stopPrice, comment="Short Stop Loss")
-//     // if(not na(QQEUP))
-//     //     strategy.close("Short")
-
-if(strategy.position_size ==0)
+if (strategy.opentrades == 0)
     takePrice := na
     stopPrice := na
 
-plot(na(stopPrice)? na: stopPrice, color=color.red, title="Stop Price")
-plot(na(takePrice)? na: takePrice, color=color.green, title="Take Price")
 
+plot(takePrice, color=color.aqua, title="Take Price",style = plot.style_linebr)
+plot(stopPrice, color=color.orange, title="Stop Price",style = plot.style_linebr)

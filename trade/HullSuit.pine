@@ -31,48 +31,51 @@ Kelly_Formula(winRate,profitRatio, winlossratio) =>
 BuySign = false
 SellSign = false
 
+HullBull = MHULL > SHULL
+HullBear = MHULL < SHULL
+
+HullBreakBull = low < MHULL and close<open
+HullBreakBear = high > SHULL and close>open
+
 switch (State)
     0 =>
         BuySign := false
         SellSign := false
-        if (MHULL < SHULL)
-            if (high > MHULL)
-                State := 1
-                SignPrice := high
-        if (MHULL > SHULL)
-            if (low < SHULL)
-                State := -1
-                SignPrice := low
+        if (HullBear and HullBreakBear)
+            State := 1
+            SignPrice := high
+        if (HullBull and HullBreakBull)
+            State := -1
+            SignPrice := low
     1 =>
-        if (MHULL < SHULL)
+        if (HullBear)
             if (close > SignPrice)
                 State := 2
                 BuySign := true
-        if (MHULL > SHULL)
-            if (low < SHULL)
-                State := -1
-                SignPrice := low
+        if (HullBull)
+            State := 0
+        if (HullBull and HullBreakBull)
+            State := -1
+            SignPrice := low
                 
     -1 =>
-        if (MHULL > SHULL)
+        if (HullBull)
             if (close < SignPrice)
                 State := -2
                 SellSign := true
-        if (MHULL < SHULL)
-            if (high > MHULL)
-                State := 1
-                SignPrice := high
+        if (HullBear)
+            State := 0
+        if (HullBear and HullBreakBear)
+            State := 1
+            SignPrice := high
     2 =>
-        if (MHULL > SHULL)
-            if (low < SHULL)
-                State := -1
-                SignPrice := low
+        if (HullBull and HullBreakBull)
+            State := -1
+            SignPrice := low
     -2 =>
-        if (MHULL < SHULL)
-            if (high > MHULL)
-                State := 1
-                SignPrice := high
-
+        if (HullBear and HullBreakBear)
+            State := 1
+            SignPrice := high
 
 plotshape(BuySign? ATRLongStopLoss:na, style=shape.labelup, location=location.absolute, size=size.normal, color=color.green, text="Buy",textcolor=color.white)
 plotshape(SellSign? ATRShortStopLoss:na, style=shape.labeldown, location=location.absolute, size=size.normal, color=color.red, text="Sell",textcolor=color.white)

@@ -1,18 +1,18 @@
 //@version=5
-strategy("MoboMacd", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity,process_orders_on_close=true ,default_qty_value=10,commission_value=0.05,initial_capital=1000)
+strategy("MoboMacd", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
-startDay = input(15, "Start Day")//50
+startDay = input(15, "Start Day")
 endYear = year(timenow)
 endMonth = month(timenow)
 endDay = dayofmonth(timenow)
 startTime = timestamp(startYear, startMonth, startDay, 00, 00)
 endTime = timestamp(endYear, endMonth, endDay, 23, 59)
-timelock = input(bool(0) ,"Time lock")
+timelock = input(bool(0), "Time lock")
 
 // 判斷當前條是否在指定的時間範圍內
-inDateRange = time >= startTime and time <= endTime or (not timelock) 
+inDateRange = time >= startTime and time <= endTime or (not timelock)
 
 ATRShortStopLoss = input.source(close, title="ATRShortStopLoss")
 ATRLongStopLoss = input.source(close, title="ATR Long Stop Loss")
@@ -21,7 +21,6 @@ ATRLongStopLoss = input.source(close, title="ATR Long Stop Loss")
 
 MoboBuy = input.source(close, title="MoboBuy Arrow")
 MoboSell = input.source(close, title="MoboSell Arrow")
-
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
 MACDcross = input.source(close, title="MACDcross")
@@ -43,18 +42,18 @@ shortcondition = MACD < MACDsignal and not na(MACDcross) and (not na(MoboSell) o
 pev_MoboBuy := MoboBuy
 pev_MoboSell := MoboSell
 
-
 takeProfitPercent = input(50.0, title="Take Profit Percent")
 WLRatio = input(1.5, title="Win/Loss Ratio take profit")
 KellyEnable = input(false, title="Kelly Enable")
 //Kelly_Formula
 winRate = input(50.0, title="Win Rate")/100
+leverage = input(1.0, title="Leverage")
 kelly_formula(winRate,profitRatio, winlossratio) =>
     f = winRate/winlossratio - (1-winRate)/ profitRatio
     if(f<0)
         f:=0
     if(KellyEnable)
-        f/100
+        f/100 * leverage
     else
         strategy.default_entry_qty(close)
         

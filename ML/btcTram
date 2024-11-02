@@ -1,0 +1,99 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import pandas as pd
+import numpy as np
+import json
+
+# Load Configurations
+with open('C:\\gitproject\\tradebot\\ML\\config.json', 'r') as config_file:
+    config = json.load(config_file)
+
+# Define Transformer Model for Trading
+class TransformerTradingModel(nn.Module):
+    def __init__(self, input_dim, d_model, nhead, num_layers, dim_feedforward):
+        super(TransformerTradingModel, self).__init__()
+        self.embedding = nn.Linear(input_dim, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.fc_out = nn.Linear(d_model, 1) # Output is the position percentage [-100, 100]
+
+    def forward(self, x):
+        x = self.embedding(x)
+        x = self.transformer_encoder(x)
+        x = self.fc_out(x)
+        return x
+
+# Load Data
+data = pd.read_csv(config['file_path'])
+prices = torch.tensor(data['close'].values, dtype=torch.float32).view(-1, 1) # Close prices as input
+
+# Create Training Sequences
+def create_sequences(data, seq_len):
+    sequences = []
+    targets = []
+    for i in range(len(data) - seq_len):
+        sequences.append(data[i:i+seq_len])
+        targets.append(data[i+seq_len])
+    return torch.stack(sequences), torch.tensor(targets)
+
+seq_len = config['seq_len']
+sequences, targets = create_sequences(prices, seq_len)
+
+# Prepare DataLoader
+dataset = torch.utils.data.TensorDataset(sequences, targets)
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=config['batch_size'], shuffle=True)
+
+# Initialize Model
+model_params = config['model_params']
+model = TransformerTradingModel(
+    input_dim=model_params['input_dim'],
+    d_model=model_params['d_model'],
+    nhead=model_params['nhead'],
+    num_layers=model_params['num_layers'],
+    dim_feedforward=model_params['dim_feedforward']
+)
+
+# Move model to GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = model.to(device)
+
+# Loss Function and Optimizer
+optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
+
+# Training Loop
+epochs = config['epochs']
+cash = 10000  # Starting cash
+all_position = 1 # Starting position
+
+for epoch in range(epochs):
+    total_loss = 0
+    model.train()
+    for batch in dataloader:
+        seq, actual_price = batch
+        
+        # Move data to GPU if available
+        seq = seq.to(device)
+        actual_price = actual_price.to(device)
+        
+        optimizer.zero_grad()
+        predicted_position = model(seq).squeeze()  # Predicted position percentage [-100, 100]
+        
+        # Calculate new cash value
+        previous_close = seq[:, -1, 0]  # Last price in the sequence
+        predicted_position = predicted_position[:len(previous_close)]  # Ensure the sizes match
+        delta_price = actual_price - previous_close
+        delta_price = delta_price[:len(predicted_position)]  # Ensure the sizes match
+        cash_update = cash + all_position * predicted_position * delta_price
+        loss = -(cash_update.mean())  # We want to maximize cash, so minimize negative cash (use mean to make it a scalar)
+        
+        # Backpropagation
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    
+    # Print epoch summary
+    print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss:.4f}")
+
+# Save Model
+torch.save(model.state_dict(), config['model_save_path'])

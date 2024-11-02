@@ -1,0 +1,14 @@
+{
+    "file_path": "C:\\gitproject\\tradebot\\ML\\BITSTAMP_BTCUSD, 240.csv",
+    "model_save_path": "./transformer_kline_Lite2.pth",
+    "learning_rate": 1,
+    "epochs": 100,
+    "batch_size": 1,
+    "output_dim": 1,
+    "seq_len": 1024,
+    "num_layers": 4,
+    "hidden_dim": 256,
+    "train_Percent": 1,
+    "validation_Percent": 0,
+    "test_Percent": 0
+}

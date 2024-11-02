@@ -1,0 +1,1 @@
+file_path = 'C:\\gitproject\\tradebot\\ML\\BITSTAMP_BTCUSD, 240.csv'

@@ -1,0 +1,1 @@
+Total probability of the observation sequence: 0.0

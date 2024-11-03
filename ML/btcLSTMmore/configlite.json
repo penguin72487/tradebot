@@ -1,0 +1,18 @@
+{
+    "file_path": "C:\\gitproject\\tradebot\\ML\\btcLSTMmore\\BITSTAMP_BTCUSD,240more.csv",
+    "save_path": "C:\\gitproject\\tradebot\\ML\\btcLSTMmore\\",
+    "model_name": "btcLSTMmoreMape",
+    "initial_equity": 1000.0,
+    "max_position": 1.0,
+    "agent": {
+        "lr": 0.0003,
+        "gamma": 0.99,
+        "clip_ratio": 0.2,
+        "hidden_size": 256,
+        "epochs": 10
+    },
+    "training": {
+        "num_episodes": 100,
+        "batch_size": 1
+    }
+}

@@ -21,7 +21,7 @@ def init_weights(m):
         nn.init.xavier_uniform_(m.linear2.weight)
 
 # Load configuration from the JSON file
-config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configmore.json"
+config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configBTCmore.json"
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
 
@@ -33,9 +33,9 @@ df = pd.read_csv(data_path)
 scaler_standard = StandardScaler()
 features = df.columns
 #幫我數每個column有null的數量
-# print(df.isnull().sum())
+print(df.isnull().sum())
 # df = df.dropna()
-features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+features = config["features"].replace("'", "").replace(", ", ",").split(",")
 data = scaler_standard.fit_transform(df[features].values)
 
 # Split the data into train and test sets
@@ -113,7 +113,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0
 # Mixed precision scaler
 scaler = torch.amp.GradScaler()
 
-model_save_path = config["model_save_path"]
+model_save_path = config["save_path"]+ config["model_name"]+".pth"
 best_model_save_path = model_save_path.replace('.pth', '_best.pth')
 best_loss = float('inf')  # 初始最佳損失設置為無窮大
 

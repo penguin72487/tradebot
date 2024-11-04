@@ -1,0 +1,15 @@
+{
+    "file_path": "C:\\gitproject\\tradebot\\ML\\btcT\\BITSTAMP_BTCUSD,240more.csv",
+    "save_path": "C:\\gitproject\\tradebot\\ML\\btcT\\",
+    "model_name": "btcTmore",
+    "learning_rate": 0.0003,
+    "epochs": 150,
+    "batch_size": 256,
+    "seq_len": 512,
+    "nhead": 4,
+    "num_layers": 4,
+    "hidden_dim": 256,
+    "features": "'close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2','MHULL','SHULL','volume', 'Bullish Volume Trend','Bearish Volume Trend'",
+
+    "train_Percent": 0.8
+}

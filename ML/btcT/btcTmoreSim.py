@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import os
 # Load model and scaler
-config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configBTCmore.json"
+config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configSPXmore.json"
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
 
@@ -110,4 +110,4 @@ plt.show()
 
 # Output to csv
 df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled})
-df_result.to_csv("C:\\gitproject\\tradebot\\ML\\btcT\\TAIEXTmoreSim{}.csv".format(start_epoch), sep=',', index=False)
+df_result.to_csv(config["save_path"] + config["model_name"] + "_result.csv", index=False)

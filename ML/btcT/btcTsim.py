@@ -102,4 +102,4 @@ plt.show()
 
 # Output to csv
 df_output = pd.DataFrame({'actual_prices': actual_prices, 'predicted_prices': predicted_prices})
-df_output.to_csv('C:\\gitproject\\tradebot\\ML\\btcT\\btcTSim.csv', index=False)
+df_output.to_csv('C:\\gitproject\\tradebot\\ML\\btcT\\btcTSim{}.csv'.format(start_epoch), sep=',', index=False)

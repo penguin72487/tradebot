@@ -31,7 +31,11 @@ df = pd.read_csv(data_path)
 
 # Standardize the data
 scaler_standard = StandardScaler()
-features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+features = df.columns
+#幫我數每個column有null的數量
+# print(df.isnull().sum())
+# df = df.dropna()
+features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
 data = scaler_standard.fit_transform(df[features].values)
 
 # Split the data into train and test sets
@@ -110,7 +114,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0
 scaler = torch.amp.GradScaler()
 
 model_save_path = config["model_save_path"]
-best_model_save_path = "C:\\gitproject\\tradebot\\ML\\btcT\\best_model.pth"
+best_model_save_path = model_save_path.replace('.pth', '_best.pth')
 best_loss = float('inf')  # 初始最佳損失設置為無窮大
 
 # Load checkpoint if exists
@@ -142,6 +146,7 @@ for epoch in range(start_epoch, epochs):
         scaler.update()
         
         total_loss += loss.item()
+        # print(f"loss: {loss.item()}, x: {x}, y: {y}")
 
     avg_loss = total_loss / len(train_loader)
     print(f'Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}')
@@ -156,10 +161,7 @@ for epoch in range(start_epoch, epochs):
     }, model_save_path)
 
     # Save the best model if the current loss is the best
-    if avg_loss < best_loss:
-        best_loss = avg_loss
-        torch.save(model.state_dict(), best_model_save_path)
-        print(f"Best model saved with loss {best_loss:.4f}")
+
     model.eval()
     test_total_loss = 0
     with torch.no_grad():
@@ -174,6 +176,10 @@ for epoch in range(start_epoch, epochs):
 
     avg_test_loss = test_total_loss / len(test_loader)
     print(f"Test Loss: {avg_test_loss:.4f}")
+    if avg_test_loss < best_loss:
+        best_loss = avg_test_loss
+        torch.save(model.state_dict(), best_model_save_path)
+        print(f"Best model saved with loss {best_loss:.4f}")
     model.train()
 
 

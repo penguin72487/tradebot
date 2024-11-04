@@ -13,7 +13,7 @@ config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configmore.json"
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
 model_save_path = config["model_save_path"]
-
+best_model_save_path = model_save_path.replace('.pth', '_best.pth')
 # Load model
 class TransformerPredictor(nn.Module):
     def __init__(self, input_dim, seq_length, num_heads, num_layers, hidden_dim):
@@ -41,9 +41,9 @@ df = pd.read_csv(data_path)
 
 # Load data
 scaler_standard = StandardScaler()
-features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+# features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
 data = scaler_standard.fit_transform(df[features].values)
-
 model = TransformerPredictor(input_dim=len(features), 
                              seq_length=config["seq_len"], 
                              num_heads=config["nhead"], 
@@ -96,8 +96,8 @@ predicted_prices_unscaled = scaler_standard.inverse_transform(
 
 # Plot the actual vs predicted prices
 plt.figure(figsize=(10, 6))
-plt.plot(actual_prices_unscaled, label='Actual Prices')
-plt.plot(predicted_prices_unscaled, label='Predicted Prices', linestyle='--')
+plt.plot(actual_prices_unscaled, label='Actual Prices', color='blue')
+plt.plot(predicted_prices_unscaled, label='Predicted Prices', linestyle= 'dotted', color='orange')
 plt.title('Actual vs Predicted Prices')
 plt.xlabel('Time Steps')
 plt.ylabel('Price')
@@ -106,4 +106,4 @@ plt.show()
 
 # Output to csv
 df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled})
-df_result.to_csv("C:\\gitproject\\tradebot\\ML\\btcT\\btcTmoreSim{}.csv".format(start_epoch), sep=',', index=False)
+df_result.to_csv("C:\\gitproject\\tradebot\\ML\\btcT\\TAIEXTmoreSim{}.csv".format(start_epoch), sep=',', index=False)

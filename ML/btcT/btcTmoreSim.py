@@ -8,12 +8,13 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import os
 # Load model and scaler
-config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configmore.json"
-
+config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configBTCmore.json"
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
-model_save_path = config["model_save_path"]
+
+model_save_path = config["save_path"]+ config["model_name"]+".pth"
 best_model_save_path = model_save_path.replace('.pth', '_best.pth')
+
 # Load model
 class TransformerPredictor(nn.Module):
     def __init__(self, input_dim, seq_length, num_heads, num_layers, hidden_dim):
@@ -41,8 +42,11 @@ df = pd.read_csv(data_path)
 
 # Load data
 scaler_standard = StandardScaler()
-# features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
-features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+features = df.columns
+#幫我數每個column有null的數量
+print(df.isnull().sum())
+# df = df.dropna()
+features = config["features"].replace("'", "").replace(", ", ",").split(",")
 data = scaler_standard.fit_transform(df[features].values)
 model = TransformerPredictor(input_dim=len(features), 
                              seq_length=config["seq_len"], 

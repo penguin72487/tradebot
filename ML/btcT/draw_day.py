@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import os
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import numpy as np
 
 # 獲取當前檔案的目錄
 current_dir = os.path.dirname(os.path.abspath(__file__))

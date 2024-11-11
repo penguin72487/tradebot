@@ -21,7 +21,7 @@ def init_weights(m):
         nn.init.xavier_uniform_(m.linear2.weight)
 
 # Load configuration from the JSON file
-config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configSPXmore.json"
+config_path = "C:\\gitproject\\tradebot\\ML\\btcDif\\configBTCmore.json"
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
 

@@ -10,6 +10,5 @@
     "num_layers": 4,
     "hidden_dim": 256,
     "features": "'close','PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2','MHULL','SHULL','volume', 'Bullish Volume Trend','Bearish Volume Trend'",
-
     "train_Percent": 0.8
 }

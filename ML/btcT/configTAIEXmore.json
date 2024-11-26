@@ -1,0 +1,15 @@
+{
+    "file_path": "C:\\gitproject\\tradebot\\ML\\btcT\\INDEX_TAIEX, 1D.csv",
+    "save_path": "C:\\gitproject\\tradebot\\ML\\btcT\\",
+    "model_name": "taiexTmore",
+    "learning_rate": 0.0003,
+    "epochs": 150,
+    "batch_size": 256,
+    "seq_len": 512,
+    "nhead": 4,
+    "num_layers": 4,
+    "hidden_dim": 256,
+    "features": "'close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2'",
+
+    "train_Percent": 0.8
+}

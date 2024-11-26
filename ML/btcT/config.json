@@ -1,0 +1,14 @@
+{
+    "file_path": "C:\\gitproject\\tradebot\\ML\\btcLSTMmore\\BITSTAMP_BTCUSD,240more.csv",
+    "model_save_path": "C:\\gitproject\\tradebot\\ML\\btcT\\transformer_btcT_model.pth",
+    "learning_rate": 0.0003,
+    "epochs": 150,
+    "input_dim": 1,
+    "batch_size":512,
+    "output_dim": 1,
+    "seq_len": 256,
+    "nhead": 4,
+    "num_layers": 4,
+    "hidden_dim": 256,
+    "train_Percent": 0.8
+}

@@ -6,8 +6,7 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 import json
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-
+import os
 torch.cuda.empty_cache()
 
 # 定義初始化權重的函數
@@ -22,7 +21,10 @@ def init_weights(m):
         nn.init.xavier_uniform_(m.linear2.weight)
 
 # Load configuration from the JSON file
-config_path = "C:\\gitproject\\tradebot\\ML\\btcT\\configmore.json"
+# config_path = "C:\\gitproject\\tradebot\\ML\\btcDif\\configSPXmore.json"
+config_path = "C:\\gitproject\\tradebot\\ML\\btcDif\\configBTCmore.json"
+# config_path = "C:\\gitproject\\tradebot\\ML\\btcDif\\configTAIEXmore.json"
+
 with open(config_path, 'r') as config_file:
     config = json.load(config_file)
 
@@ -32,8 +34,19 @@ df = pd.read_csv(data_path)
 
 # Standardize the data
 scaler_standard = StandardScaler()
-features = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+features = df.columns
+#幫我數每個column有null的數量
+print(df.isnull().sum())
+# df = df.dropna()
+features = config["features"].replace("'", "").replace(", ", ",").split(",")
 data = scaler_standard.fit_transform(df[features].values)
+
+# Split the data into train and test sets
+train_percent = config["train_Percent"]
+test_percent = 1 - train_percent
+train_size = int(len(data) * train_percent)
+train_data = data[:train_size]
+test_data = data[train_size:]
 
 # Dataset class to handle the input sequence data
 class TimeSeriesDataset(Dataset):
@@ -42,12 +55,22 @@ class TimeSeriesDataset(Dataset):
         self.seq_length = seq_length
 
     def __len__(self):
-        return len(self.data) - self.seq_length
+        return len(self.data) - self.seq_length - 1
 
     def __getitem__(self, index):
         x = self.data[index:index+self.seq_length]
-        y = self.data[index + self.seq_length, 0]  # Predicting next 'close' price
+        # Predicting next change rate (close / close[-1])
+        y = self.data[index + self.seq_length + 1, 0] / self.data[index + self.seq_length, 0]
         return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+
+# Prepare datasets and dataloaders for training and testing
+seq_length = config["seq_len"]
+
+train_dataset = TimeSeriesDataset(train_data, seq_length)
+test_dataset = TimeSeriesDataset(test_data, seq_length)
+
+train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False)
 
 # Transformer model definition
 class TransformerPredictor(nn.Module):
@@ -70,7 +93,6 @@ class TransformerPredictor(nn.Module):
         return out
 
 # Parameters from config file
-seq_length = config["seq_len"]
 input_dim = len(features)
 hidden_dim = config["hidden_dim"]
 num_heads = config["nhead"]
@@ -79,18 +101,33 @@ batch_size = config["batch_size"]
 epochs = config["epochs"]
 learning_rate = config["learning_rate"]
 
-# Prepare dataset and dataloader
-dataset = TimeSeriesDataset(data, seq_length)
-dataloader = DataLoader(dataset, batch_size=batch_size)
-
 # Model, loss function, and optimizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = TransformerPredictor(input_dim, seq_length, num_heads, num_layers, hidden_dim).to(device)
 
 # Initialize weights
 model.apply(init_weights)
+def r_squared_loss(y_true, y_pred):
+    # 計算總變異平方和 SS_tot
+    y_mean = torch.mean(y_true)
+    ss_tot = torch.sum((y_true - y_mean) ** 2)
+
+    # 計算殘差平方和 SS_res
+    ss_res = torch.sum((y_true - y_pred) ** 2)
+
+    # 計算 R-squared
+    r2 = 1 - ss_res / ss_tot
+
+    return r2
+
+def r_squared_as_loss(y_true, y_pred):
+    # 計算 R-squared
+    r2 = r_squared_loss(y_true, y_pred)
+    # 損失就是 1 - R^2，目標是最小化這個損失
+    return 1 - r2
 
 criterion = nn.SmoothL1Loss()  # Changed to Smooth L1 Loss
+# criterion = r_squared_as_loss
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
 # Learning rate scheduler
@@ -99,12 +136,25 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0
 # Mixed precision scaler
 scaler = torch.amp.GradScaler()
 
-# Training and backtesting loop
-for epoch in range(epochs):
-    # Training
+model_save_path = config["save_path"]+ config["model_name"]+".pth"
+best_model_save_path = model_save_path.replace('.pth', '_best.pth')
+best_loss = float('inf')  # 初始最佳損失設置為無空大
+
+# Load checkpoint if exists
+start_epoch = 0
+if os.path.exists(model_save_path):
+    checkpoint = torch.load(model_save_path, weights_only=True)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    best_loss = checkpoint.get('best_loss', best_loss)
+    print(f'Resuming training from epoch {start_epoch}')
+
+# Training loop
+for epoch in range(start_epoch, epochs):
     model.train()
     total_loss = 0
-    for x, y in dataloader:
+    for x, y in train_loader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         
@@ -120,47 +170,53 @@ for epoch in range(epochs):
         
         total_loss += loss.item()
 
-    avg_loss = total_loss / len(dataloader)
+    avg_loss = total_loss / len(train_loader)
     print(f'Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}')
     scheduler.step(avg_loss)
 
-    # Backtesting after each epoch
+    # Save current model checkpoint
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'best_loss': best_loss
+    }, model_save_path)
+
+    # Save the best model if the current loss is the best
     model.eval()
-    actual_prices = []
-    predicted_prices = []
-
+    test_total_loss = 0
     with torch.no_grad():
-        sliding_window = data[:seq_length]
+        for x, y in test_loader:
+            x, y = x.to(device), y.to(device)
 
-        for i in range(len(data) - seq_length - 1):
-            # Prepare input sequence for the model
-            input_tensor = torch.tensor(sliding_window, dtype=torch.float32).unsqueeze(0).to(device)
+            with torch.amp.autocast(device_type='cuda'):
+                outputs = model(x).squeeze()
+                loss = criterion(outputs, y)
 
-            # Model prediction
-            predicted = model(input_tensor).item()
-            predicted_prices.append(predicted)
+            test_total_loss += loss.item()
 
-            # Get the actual next value
-            actual_value = data[i + seq_length][0]  # 取出下一個時間步的實際 'close' 價格
-            actual_prices.append(actual_value)
+    avg_test_loss = test_total_loss / len(test_loader)
+    print(f"Test Loss: {avg_test_loss:.4f}")
+    if avg_test_loss < best_loss:
+        best_loss = avg_test_loss
+        torch.save(model.state_dict(), best_model_save_path)
+        print(f"Best model saved with loss {best_loss:.4f}")
+    model.train()
 
-            # 更新滑動窗口：用實際的特徵進行更新，將舊的數據丟棄
-            new_entry = data[i + seq_length]  # 獲取新的時間步的所有特徵
-            sliding_window = np.vstack((sliding_window[1:], new_entry))  # 保持窗口大小不變
+# Testing loop
+model.eval()
+test_total_loss = 0
+with torch.no_grad():
+    for x, y in test_loader:
+        x, y = x.to(device), y.to(device)
 
-    # 反標準化處理
-    actual_prices_unscaled = scaler_standard.inverse_transform(np.array(actual_prices).reshape(-1, 1))[:, 0]
-    predicted_prices_unscaled = scaler_standard.inverse_transform(np.array(predicted_prices).reshape(-1, 1))[:, 0]
+        with torch.amp.autocast(device_type='cuda'):
+            outputs = model(x).squeeze()
+            loss = criterion(outputs, y)
 
-    # Save backtesting results to CSV
-    df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled})
-    backtest_save_path = f"C:\\gitproject\\tradebot\\ML\\btcT\\btcTmoreSim_epoch_{epoch+1}.csv"
-    df_result.to_csv(backtest_save_path, sep=',', index=False)
+        test_total_loss += loss.item()
 
-    print(f"Backtesting results saved for epoch {epoch+1}.")
-
-# Save the trained model
-model_save_path = config["model_save_path"]
-torch.save(model.state_dict(), model_save_path)
+avg_test_loss = test_total_loss / len(test_loader)
+print(f"Test Loss: {avg_test_loss:.4f}")
 
 print("Training complete.")

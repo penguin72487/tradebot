@@ -31,7 +31,7 @@ for d in data_Set:
     df = pd.read_csv(data_path)
 
     # 幫我數每個column有null的數量
-    print(df.isnull().sum())
+    # print(df.isnull().sum())
     # df = df.dropna()
     features = config["features"].replace("'", "").replace(", ", ",").split(",")
     data = df[features].values
@@ -107,7 +107,12 @@ for d in data_Set:
     # Initialize weights
     model.apply(init_weights)
 
-    criterion = nn.SmoothL1Loss()  # Changed to Smooth L1 Loss
+    def kelly_criterion(expected_returns):
+        # Calculate the optimal fraction based on the Kelly Criterion
+        return 1 / expected_returns
+    
+    # criterion = nn.SmoothL1Loss()  # Changed to Smooth L1 Loss
+    criterion = kelly_criterion
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
     # Learning rate scheduler
@@ -130,20 +135,9 @@ for d in data_Set:
         best_loss = checkpoint.get('best_loss', best_loss)
         print(f'Resuming training from epoch {start_epoch}')
 
-    # Generalized Kelly Criterion function
-    def generalized_kelly(prob_dist, returns):
-        """
-        Calculate the optimal fraction to invest based on expected returns and probability distribution
-        using the generalized Kelly criterion.
-        """
-        # Calculate expected return
-        expected_return = torch.sum(prob_dist * returns)
-        # Calculate variance
-        variance = torch.sum(prob_dist * (returns - expected_return) ** 2)
-        # Kelly formula (f = (mean / variance))
-        kelly_fraction = expected_return / variance
-        return kelly_fraction  # Clamp between 0 and 1 to ensure reasonable bet sizes
 
+    
+    
     # Training loop
     for epoch in range(start_epoch, epochs):
         model.train()
@@ -155,7 +149,7 @@ for d in data_Set:
             # Mixed precision training
             with torch.amp.autocast(device_type='cuda'):
                 outputs = model(x).squeeze()
-                loss = criterion(outputs, y)
+                loss = criterion(outputs)
             
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Gradient clipping

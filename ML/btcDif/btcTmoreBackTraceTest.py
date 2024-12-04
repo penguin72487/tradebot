@@ -41,7 +41,7 @@ data_path = config["file_path"]
 df = pd.read_csv(data_path)
 
 # Count null values in each column
-# print(df.isnull().sum())
+print(df.isnull().sum())
 
 # Select features and apply Min-Max Scaling
 features = config["features"].replace("'", "").replace(", ", ",").split(",")
@@ -50,27 +50,46 @@ min_value = np.min(data)
 max_value = np.max(data)
 data = (data - min_value) / (max_value - min_value)
 
+train_percent = config["train_Percent"]
+test_percent = 1 - train_percent
+train_size = int(len(data) * train_percent)
+train_data = data[:train_size]
+data = data[train_size:]
+
+
 model = TransformerPredictor(input_dim=len(features), 
                              seq_length=config["seq_len"], 
                              num_heads=config["nhead"], 
                              num_layers=config["num_layers"], 
                              hidden_dim=config["hidden_dim"]).to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"])
-
-if os.path.exists(model_save_path):
-    checkpoint = torch.load(model_save_path, weights_only=True)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    start_epoch = checkpoint['epoch'] + 1
-    print(f'Resuming training from epoch {start_epoch}')
+if os.path.exists(best_model_save_path):
+    checkpoint = torch.load(best_model_save_path, weights_only=True)
+    model.load_state_dict(checkpoint)
+    print(f'Model loaded from {best_model_save_path}')
 model.eval()
 
 # Prepare to store actual and predicted values
 actual_prices = []
 predicted_prices = []
-balance_history = []
-balance = 1000
+initial_balance = 1000.0  # Initial capital in USD
+balance = initial_balance
+position = 0  # Current position (in units of the asset)
+balance_history = []  # Store balance over time
+
+# Generalized Kelly Criterion function
+def generalized_kelly(predicted, prob_dist, leverage=10000):
+    """
+    Calculate the optimal fraction to invest based on expected returns and probability distribution
+    using the generalized Kelly criterion.
+    """
+    # Calculate expected return
+    expected_return = torch.sum(predicted * prob_dist)
+    # Calculate variance
+    variance = torch.sum(prob_dist * (predicted - expected_return) ** 2)
+    # Kelly formula (f = (mean / variance))
+    kelly_fraction = expected_return / variance
+    return kelly_fraction * leverage  # 返回每個可能性對應的分配比例，並乘上一個常數以避免過度投資
 
 # Sliding window to simulate the prediction process
 seq_length = config["seq_len"]
@@ -90,16 +109,34 @@ with torch.no_grad():
         actual_value = data[i + seq_length][0]  # 取出下一個時間步的實際 'close' 價格
         actual_prices.append(actual_value)
 
-        # update balance
-        prev_price = data[i + seq_length - 1][0]* (max_value - min_value) + min_value
-        current_price = data[i + seq_length][0]* (max_value - min_value) + min_value
-        delta_price = current_price - prev_price
-        kelly_fraction = 1/ (predicted-1)
-        balance += balance/prev_price * kelly_fraction * delta_price
-        balance_history.append(balance)
+        # Calculate the return (change rate) and decide position size using Kelly Criterion
+        outputs = model(input_tensor).squeeze()
+        for i in range(outputs):
+            predicted_value = outputs[i].item()  # 預測的數值
 
-        if balance < 0:
-            balance = 1000
+            # 將預測值轉換為機率
+            prob_dist = torch.softmax(outputs, dim=-1)  # 這會產生每個樣本的機率分佈
+            probability = prob_dist[i].item()  # 這是模型的機率值（可能需要根據需求調整）
+
+            # 打印出預測和機率
+            print(f"Prediction: {predicted_value:.4f}, Probability: {probability:.4f}")
+
+        kelly_fraction = generalized_kelly(outputs, prob_dist)
+
+        # Update position and balance
+        prev_price = data[i + seq_length - 1][0]  # Previous price
+        current_price = data[i + seq_length][0]
+        delta_price = current_price - prev_price  # Price change
+
+        balance += balance/prev_price*kelly_fraction*delta_price
+
+        if(balance < 0):
+            print(f"balance < 0, balance={balance}, prev_price={prev_price}, current_price={current_price}, kelly_fraction={kelly_fraction}, delta_price={delta_price}")
+            break
+
+        # Store balance history
+        balance_history.append(balance)  # Balance plus current position value
+        print(f"balance={balance}, prev_price={prev_price}, current_price={current_price}, kelly_fraction={kelly_fraction}, delta_price={delta_price}")
 
         # 更新滑動窗口：用實際的特徵進行更新，將舊的數據丟棄
         new_entry = data[i + seq_length]  # 獲取新的時間步的所有特徵
@@ -124,17 +161,21 @@ plt.ylabel('Price')
 plt.legend()
 plt.show()
 
-
-# Plot the balance history
+# Plot the balance over time
 plt.figure(figsize=(10, 6))
-plt.plot(balance_history, label='Balance', color='green')
-plt.title('Balance History')
+plt.plot(balance_history, label='Portfolio Balance', color='green')
+plt.title('Portfolio Balance Over Time')
 plt.xlabel('Time Steps')
-plt.ylabel('Balance')
+plt.ylabel('Balance (USD)')
 plt.legend()
 plt.show()
 
-
 # Output to csv
-df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled})
+df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled, "Balance": balance_history})
 df_result.to_csv(config["save_path"] + config["model_name"] + "_result.csv", index=False)
+
+# Print final balance
+print(f"Initial Balance:  ${initial_balance:.2f}")
+print(f"Final Balance:    ${balance:.2f}")
+print(f"holding strategy: ${actual_prices_unscaled[-1] / actual_prices_unscaled[0]*1000:.2f}")
+print("Backtesting complete.")

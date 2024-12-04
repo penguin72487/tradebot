@@ -3,7 +3,7 @@
     "save_path": "C:\\gitproject\\tradebot\\ML\\btcDif\\",
     "model_name": "spxTmore",
     "learning_rate": 0.0003,
-    "epochs": 100,
+    "epochs": 50,
     "batch_size": 256,
     "seq_len": 512,
     "nhead": 4,

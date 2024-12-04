@@ -8,7 +8,7 @@ import json
 import os
 torch.cuda.empty_cache()
 
-# 定義初始化權重的函數
+# Define a function to initialize weights
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
@@ -30,19 +30,18 @@ for d in data_Set:
     data_path = config["file_path"]
     df = pd.read_csv(data_path)
 
-    # 幫我數每個column有null的數量
-    print(df.isnull().sum())
-    # df = df.dropna()
+    # Count the number of null values in each column
+    # print(df.isnull().sum())
+    # Drop rows with missing values
     features = config["features"].replace("'", "").replace(", ", ",").split(",")
     data = df[features].values
-    # 使用 Min-Max Scaling 將數據縮放到 [0, 1] 範圍
-    min_value = np.min(data)
-    max_value = np.max(data)
-    data = (data - min_value) / (max_value - min_value)*100
+    # Use Min-Max Scaling to scale the data to the [0, 1] range
+    min_value = np.min(data, axis=0)
+    max_value = np.max(data, axis=0)
+    data = (data - min_value) / (max_value - min_value + 1e-8)  # Added epsilon to avoid division by zero
 
     # Split the data into train and test sets
     train_percent = config["train_Percent"]
-    test_percent = 1 - train_percent
     train_size = int(len(data) * train_percent)
     train_data = data[:train_size]
     test_data = data[train_size:]
@@ -58,8 +57,10 @@ for d in data_Set:
 
         def __getitem__(self, index):
             x = self.data[index:index+self.seq_length]
-            # Predicting next change rate (close / close[-1])
-            y = self.data[index + self.seq_length + 1, 0] / self.data[index + self.seq_length, 0]
+            # Predicting next change rate (close / close[-1]) with safe divide
+            prev_value = self.data[index + self.seq_length, 0]
+            next_value = self.data[index + self.seq_length + 1, 0]
+            y = next_value / (prev_value + 1e-8)  # Added epsilon to avoid division by zero
             return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
     # Prepare datasets and dataloaders for training and testing
@@ -81,15 +82,18 @@ for d in data_Set:
             self.pos_encoder = nn.Parameter(torch.zeros(1, seq_length, hidden_dim))
             encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, batch_first=True)
             self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-            self.fc = nn.Linear(hidden_dim, 1)
-
+            self.fc_price = nn.Linear(hidden_dim, 1)  # Predict price change
+            self.fc_confidence = nn.Linear(hidden_dim, 1)  # Predict confidence
+            self.sigmoid = nn.Softmax(dim=1)  # Apply softmax to get confidence level between 0 and 1
+            # self.sigmoid = nn.Sigmoid()  # Apply sigmoid to get confidence level between 0 and 1
         def forward(self, x):
             # Create embeddings with positional encodings
             x = self.embedding(x) + self.pos_encoder
             x = self.transformer(x)  # No need to permute if batch_first=True
             x = x[:, -1, :]  # Get the last time step
-            out = self.fc(x)
-            return out
+            price_change = self.fc_price(x)
+            confidence = self.sigmoid(self.fc_confidence(x))  # Apply sigmoid to get confidence level between 0 and 1
+            return price_change, confidence
 
     # Parameters from config file
     input_dim = len(features)
@@ -116,9 +120,9 @@ for d in data_Set:
     # Mixed precision scaler
     scaler = torch.amp.GradScaler()
 
-    model_save_path = config["save_path"]+ config["model_name"]+".pth"
+    model_save_path = config["save_path"] + config["model_name"] + ".pth"
     best_model_save_path = model_save_path.replace('.pth', '_best.pth')
-    best_loss = float('inf')  # 初始最佳損失設置為無空大
+    best_loss = float('inf')  # Initial best loss set to infinity
 
     # Load checkpoint if exists
     start_epoch = 0
@@ -131,18 +135,12 @@ for d in data_Set:
         print(f'Resuming training from epoch {start_epoch}')
 
     # Generalized Kelly Criterion function
-    def generalized_kelly(prob_dist, returns):
-        """
-        Calculate the optimal fraction to invest based on expected returns and probability distribution
-        using the generalized Kelly criterion.
-        """
-        # Calculate expected return
-        expected_return = torch.sum(prob_dist * returns)
-        # Calculate variance
-        variance = torch.sum(prob_dist * (returns - expected_return) ** 2)
-        # Kelly formula (f = (mean / variance))
+    def generalized_kelly(predicted_price, confidence, leverage=10000.0):
+        expected_return = torch.sum(predicted_price * confidence)
+        variance = torch.sum((predicted_price - expected_return) ** 2 * confidence)
+       
         kelly_fraction = expected_return / variance
-        return kelly_fraction  # Clamp between 0 and 1 to ensure reasonable bet sizes
+        return kelly_fraction*leverage
 
     # Training loop
     for epoch in range(start_epoch, epochs):
@@ -154,8 +152,8 @@ for d in data_Set:
             
             # Mixed precision training
             with torch.amp.autocast(device_type='cuda'):
-                outputs = model(x).squeeze()
-                loss = criterion(outputs, y)
+                predicted_price, confidence = model(x)
+                loss = criterion(predicted_price.squeeze(), y)
             
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Gradient clipping
@@ -180,48 +178,48 @@ for d in data_Set:
         model.eval()
         test_total_loss = 0
         with torch.no_grad():
+            balance = 1000.0  # Initial capital in USD
             for x, y in test_loader:
                 x, y = x.to(device), y.to(device)
 
                 with torch.amp.autocast(device_type='cuda'):
-                    outputs = model(x).squeeze()
-                    loss = criterion(outputs, y)
-                    # Calculating probability distribution based on output (using Softmax for probabilities)
-                    prob_dist = torch.softmax(outputs, dim=0)
-                    expected_returns = y  # Assuming y contains the actual returns
-                    kelly_fraction = generalized_kelly(prob_dist, expected_returns)
-                    print(f"Optimal Kelly Fraction: {kelly_fraction.item():.4f}")
-
+                    predicted_price, confidence = model(x)
+                    loss = criterion(predicted_price.squeeze(), y)
+                    prev_price = x[0, -1, 0].item()  # Previous price
+                    current_price = y[0].item()  # Current price
+                    delta = current_price - prev_price
+                    kelly_fraction = generalized_kelly(predicted_price.squeeze(), confidence.squeeze())
+                    balance += balance / prev_price * kelly_fraction * delta
+                    
                 test_total_loss += loss.item()
 
         avg_test_loss = test_total_loss / len(test_loader)
-        print(f"Test Loss: {avg_test_loss:.16f}")
+        print(f"Test Loss: {avg_test_loss:.16f}, Balance: {balance:.4f}")
         if avg_test_loss < best_loss:
             best_loss = avg_test_loss
             torch.save(model.state_dict(), best_model_save_path)
-            print(f"Best model saved with loss {best_loss:.16f}")
+            print(f"Best model saved with loss          {best_loss:.16f}")
         model.train()
+    # Testing loop
+    model.eval()
+    test_total_loss = 0
+    with torch.no_grad():
+        for x, y in test_loader:
+            x, y = x.to(device), y.to(device)
 
-# Testing loop
-model.eval()
-test_total_loss = 0
-with torch.no_grad():
-    for x, y in test_loader:
-        x, y = x.to(device), y.to(device)
+            with torch.amp.autocast(device_type='cuda'):
+                predicted_price, confidence = model(x)
+                loss = criterion(predicted_price.squeeze(), y)
+                
+                # Calculating probability distribution and optimal fraction using Kelly criterion
+                kelly_fraction = generalized_kelly(predicted_price.squeeze(), confidence.squeeze())
+                print(f"Optimal Kelly Fraction: {kelly_fraction.item():.4f}")
 
-        with torch.amp.autocast(device_type='cuda'):
-            outputs = model(x).squeeze()
-            loss = criterion(outputs, y)
-            
-            # Calculating probability distribution and optimal fraction using Kelly criterion
-            prob_dist = torch.softmax(outputs, dim=0)
-            expected_returns = y
-            kelly_fraction = generalized_kelly(prob_dist, expected_returns)
-            print(f"Optimal Kelly Fraction: {kelly_fraction.item():.4f}")
+            test_total_loss += loss.item()
 
-        test_total_loss += loss.item()
+    avg_test_loss = test_total_loss / len(test_loader)
+    print(f"Test Loss: {avg_test_loss:.16f}")
 
-avg_test_loss = test_total_loss / len(test_loader)
-print(f"Test Loss: {avg_test_loss:.16f}")
+    print("Training complete.")
 
-print("Training complete.")
+

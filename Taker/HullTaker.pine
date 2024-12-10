@@ -1,0 +1,56 @@
+//@version=5
+strategy("MoboMacd", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(0), "Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock)
+
+MHULL = input.source(close, title="MHULL")
+SHULL = input.source(close, title="SHULL")
+
+SMDiffPersent = MHULL / SHULL * 100 - 100
+
+perSentApha = input(1, title="persentApha")
+
+BullM = (SMDiffPersent * perSentApha + 1.0) / 2.0
+BearM = 1.0 - BullM
+
+leverage = input(1.0, title="Leverage")
+
+// 獲取當前倉位
+currentPositionSize = strategy.position_size
+
+// 獲取當前可動用的資金
+currentEquity = strategy.equity
+
+// 獲取當前價格
+currentPrice = close
+
+// 計算倉位的市值
+positionValue = currentPositionSize * currentPrice
+
+// 計算總投資組合的價值
+totalPortfolioValue = positionValue + currentEquity
+
+// 計算倉位比例
+
+
+
+// // 設置倉位比例與槓桿
+// if (longCondition)
+//     strategy.entry("Long", strategy.long, qty=100 * leverage * BullM)
+// if (shortCondition)
+//     strategy.entry("Short", strategy.short, qty=100 * leverage * BearM)
+
+// 繪圖
+plot(BullM, color=color.new(color.green, 0), title="Bullish Strength")
+plot(BearM, color=color.new(color.red, 0), title="Bearish Strength")

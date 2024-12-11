@@ -1,5 +1,5 @@
 //@version=6
-strategy("Taker", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
+strategy("Taker", overlay=true,precision=6, pyramiding=100, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
@@ -16,14 +16,11 @@ inDateRange = time >= startTime and time <= endTime or (not timelock)
 
 float MHULL = input.source(close, title="MHULL")
 float SHULL = input.source(close, title="SHULL")
-
-float SMDiffPersent = MHULL / SHULL
+float SMDiff = MHULL - SHULL
 
 perSentApha = input(1.0, title="persentApha")
-perSentApha = input(1.0, title="persentApha")
 
-BullM = (SMDiffPersent * perSentApha + 1.0) / 2.0
-BearM = 1.0 - BullM
+BullM = SMDiff*perSentApha
 
 leverage = input(1.0, title="Leverage")
 
@@ -40,14 +37,10 @@ currentPrice = close
 positionValue = currentPositionSize * currentPrice
 
 // 計算總投資組合的價值
-totalPortfolioValue = positionValue + currentEquity
-
 // 計算倉位比例
-longPositionSize = totalPortfolioValue * BullM / currentPrice
-shortPositionSize = totalPortfolioValue * BearM / currentPrice
+PositionSize = currentEquity * BullM / currentPrice 
 
-totalPositionSize = longPositionSize - shortPositionSize
-deltaPositionSize = totalPositionSize - currentPositionSize
+deltaPositionSize = PositionSize - strategy.position_size
 
 if (inDateRange)
     if (deltaPositionSize > 0)
@@ -56,7 +49,12 @@ if (inDateRange)
         strategy.entry("Short", strategy.short, qty=-deltaPositionSize*leverage)
 
 
+
 // 結束前計算
-plot(SMDiffPersent, color=color.new(color.blue, 0), title="SMDiffPersent")
-plot(BullM, color=color.new(color.green, 0), title="Bullish Strength")
-plot(BearM, color=color.new(color.red, 0), title="Bearish Strength")
+plot(SMDiff, color=color.new(color.blue, 0), title="SMDiff")
+plot(BullM, color=color.new(color.green, 0), title="BullM")
+plot(positionValue , color=color.new(color.orange, 0), title="positionValue")
+plot(currentEquity, color=color.new(color.gray, 0), title="currentEquity")
+plot(currentPositionSize, color=color.new(color.red, 0), title="currentPositionSize")
+plot(PositionSize, color=color.new(color.purple, 0), title="PositionSize")
+plot(deltaPositionSize, color=color.new(color.yellow, 0), title="deltaPositionSize")

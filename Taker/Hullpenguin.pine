@@ -1,5 +1,5 @@
 //@version=6
-strategy("Taker", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
+strategy("Taker", overlay=true,precision=6, pyramiding=100, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
@@ -40,7 +40,7 @@ positionValue = currentPositionSize * currentPrice
 // 計算倉位比例
 PositionSize = currentEquity * BullM / currentPrice 
 
-deltaPositionSize = PositionSize - currentPositionSize
+deltaPositionSize = PositionSize - strategy.position_size
 
 if (inDateRange)
     if (deltaPositionSize > 0)

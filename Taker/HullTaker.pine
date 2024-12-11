@@ -1,5 +1,5 @@
 //@version=5
-strategy("MoboMacd", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
+strategy("Taker", overlay=true, pyramiding=1, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, default_qty_value=10, commission_value=0.05, initial_capital=1000)
 
 startYear = input(2023, "Start Year")
 startMonth = input(3, "Start Month")
@@ -17,9 +17,9 @@ inDateRange = time >= startTime and time <= endTime or (not timelock)
 MHULL = input.source(close, title="MHULL")
 SHULL = input.source(close, title="SHULL")
 
-SMDiffPersent = MHULL / SHULL * 100 - 100
+SMDiffPersent = MHULL / SHULL * 100.0 - 100.0
 
-perSentApha = input(1, title="persentApha")
+perSentApha = input(1.0, title="persentApha")
 
 BullM = (SMDiffPersent * perSentApha + 1.0) / 2.0
 BearM = 1.0 - BullM
@@ -42,14 +42,18 @@ positionValue = currentPositionSize * currentPrice
 totalPortfolioValue = positionValue + currentEquity
 
 // 計算倉位比例
+longPositionSize = totalPortfolioValue * BullM / currentPrice
+shortPositionSize = totalPortfolioValue * BearM / currentPrice
 
+totalPositionSize = longPositionSize - shortPositionSize
+deltaPositionSize = totalPositionSize - currentPositionSize
 
+if (inDateRange)
+    if (deltaPositionSize > 0)
+        strategy.entry("Long", strategy.long, qty=deltaPositionSize*leverage)
+    else if (deltaPositionSize < 0)
+        strategy.entry("Short", strategy.short, qty=-deltaPositionSize*leverage)
 
-// // 設置倉位比例與槓桿
-// if (longCondition)
-//     strategy.entry("Long", strategy.long, qty=100 * leverage * BullM)
-// if (shortCondition)
-//     strategy.entry("Short", strategy.short, qty=100 * leverage * BearM)
 
 // 繪圖
 plot(BullM, color=color.new(color.green, 0), title="Bullish Strength")

@@ -20,6 +20,7 @@ float SHULL = input.source(close, title="SHULL")
 float SMDiffPersent = MHULL / SHULL
 
 perSentApha = input(1.0, title="persentApha")
+perSentApha = input(1.0, title="persentApha")
 
 BullM = (SMDiffPersent * perSentApha + 1.0) / 2.0
 BearM = 1.0 - BullM

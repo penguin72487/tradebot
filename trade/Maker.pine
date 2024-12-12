@@ -1,0 +1,34 @@
+// This is a Pine Script code for a Market Making strategy
+//@version=5
+strategy("Market Making Strategy", overlay=true)
+// Input settings
+spread = input.float(0.5, title="Spread (%)")
+size = input.float(1.0, title="Order Size")
+
+// Calculate mid price
+midPrice = (high + low) / 2
+
+// Calculate bid and ask prices
+bidPrice = midPrice * (1 - spread / 100)
+askPrice = midPrice * (1 + spread / 100)
+
+// Plot bid and ask prices
+plot(bidPrice, color=color.new(color.green, 0), title="Bid Price")
+plot(askPrice, color=color.new(color.red, 0), title="Ask Price")
+
+// Trading signals
+longCondition = ta.crossover(close, bidPrice)
+shortCondition = ta.crossunder(close, askPrice)
+if (longCondition)
+    Strategy.entry("Long", Strategy.long, qty=size)
+if (shortCondition)
+    strategy.entry("Short", strategy.short, qty=size)
+// Track PnL (notional representation for demonstration purposes)
+var float pnl = 0
+if (longCondition)
+    pnl := pnl - bidPrice * size
+if (shortCondition)
+    pnl := pnl + askPrice * size
+
+// Display PnL
+label.new(bar_index, close, "PnL: " + str.tostring(pnl), style=label.style_label_right, color=color.new(color.blue, 0))

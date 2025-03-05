@@ -68,7 +68,9 @@ model.eval()
 
 # Prepare to store actual and predicted values
 actual_prices = []
+predicted_delta = []
 predicted_prices = []
+
 balance_history = []
 balance = 1000
 
@@ -84,6 +86,9 @@ with torch.no_grad():
 
         # Model prediction
         predicted = model(input_tensor).item()
+        predicted_delta.append(predicted)
+        predicted = predicted + 1
+
         predicted_prices.append(input_tensor[0, -1, 0].item() * predicted)
 
         # Get the actual next value
@@ -107,6 +112,7 @@ with torch.no_grad():
 
 # Convert actual_prices and predicted_prices to numpy arrays for scaling
 actual_prices = np.array(actual_prices)
+predicted_delta = np.array(predicted_delta)
 predicted_prices = np.array(predicted_prices)
 balance_history = np.array(balance_history)
 
@@ -136,5 +142,5 @@ plt.show()
 
 
 # Output to csv
-df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled})
+df_result = pd.DataFrame(data={"Actual": actual_prices_unscaled, "Predicted": predicted_prices_unscaled, "predicted_delta": predicted_delta})
 df_result.to_csv(config["save_path"] + config["model_name"] + "_result.csv", index=False)

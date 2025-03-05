@@ -31,7 +31,7 @@ for d in data_Set:
     df = pd.read_csv(data_path)
 
     # 幫我數每個column有null的數量
-    print(df.isnull().sum())
+    # print(df.isnull().sum())
     # df = df.dropna()
     features = config["features"].replace("'", "").replace(", ", ",").split(",")
     data = df[features].values
@@ -47,6 +47,10 @@ for d in data_Set:
     train_data = data[:train_size]
     test_data = data[train_size:]
 
+
+    loss_Weight = (train_percent/test_percent)
+
+
     # Dataset class to handle the input sequence data
     class TimeSeriesDataset(Dataset):
         def __init__(self, data, seq_length):
@@ -59,7 +63,7 @@ for d in data_Set:
         def __getitem__(self, index):
             x = self.data[index:index+self.seq_length]
             # Predicting next change rate (close / close[-1])
-            y = self.data[index + self.seq_length + 1, 0] / self.data[index + self.seq_length, 0]
+            y = self.data[index + self.seq_length + 1, 0] / self.data[index + self.seq_length, 0] - 1.0
             return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
     # Prepare datasets and dataloaders for training and testing
@@ -107,7 +111,15 @@ for d in data_Set:
     # Initialize weights
     model.apply(init_weights)
 
-    criterion = nn.SmoothL1Loss()  # Changed to Smooth L1 Loss
+    def directional_loss(y_pred, y_actual):
+        smooth_l1 = nn.SmoothL1Loss()(y_pred, y_actual)
+        direction_penalty = torch.where(torch.sign(y_pred) != torch.sign(y_actual), 0.1, 0.0)
+        return smooth_l1 + torch.mean(direction_penalty)
+
+
+    # criterion = nn.SmoothL1Loss()  # Changed to Smooth L1 Loss
+    # criterion = nn.MSELoss()
+    criterion = directional_loss
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
     # Learning rate scheduler
@@ -164,9 +176,8 @@ for d in data_Set:
             
             total_loss += loss.item()
 
-        avg_loss = total_loss / len(train_loader)
-        print(f'Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.16f}')
-        scheduler.step(avg_loss)
+        print(f'Epoch [{epoch+1}/{epochs}], Loss: {total_loss/loss_Weight:.16f}')
+        scheduler.step(total_loss)
 
         # Save current model checkpoint
         torch.save({
@@ -190,14 +201,13 @@ for d in data_Set:
                     prob_dist = torch.softmax(outputs, dim=0)
                     expected_returns = y  # Assuming y contains the actual returns
                     kelly_fraction = generalized_kelly(prob_dist, expected_returns)
-                    print(f"Optimal Kelly Fraction: {kelly_fraction.item():.4f}")
+                    # print(f"Optimal Kelly Fraction: {kelly_fraction.item():.4f}")
 
                 test_total_loss += loss.item()
 
-        avg_test_loss = test_total_loss / len(test_loader)
-        print(f"Test Loss: {avg_test_loss:.16f}")
-        if avg_test_loss < best_loss:
-            best_loss = avg_test_loss
+        print(f"Test Loss: {test_total_loss:.16f}")
+        if test_total_loss < best_loss:
+            best_loss = test_total_loss
             torch.save(model.state_dict(), best_model_save_path)
             print(f"Best model saved with loss {best_loss:.16f}")
         model.train()
@@ -221,7 +231,6 @@ with torch.no_grad():
 
         test_total_loss += loss.item()
 
-avg_test_loss = test_total_loss / len(test_loader)
-print(f"Test Loss: {avg_test_loss:.16f}")
+print(f"Test Loss: {test_total_loss:.16f}")
 
 print("Training complete.")

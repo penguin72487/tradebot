@@ -1,5 +1,4 @@
-
-strategy(title='[STRATEGY][RS]ZigZag PA Strategy V4.1 Penguin', shorttitle='S', overlay=true, pyramiding=0, initial_capital=1000, commission_value=0.05)
+strategy(title='[STRATEGY][RS]ZigZag PA Strategy V4.1 Penguin', shorttitle='RS', overlay=true, pyramiding=0, initial_capital=1000, commission_value=0.05)
 
 useHA = input(false, title='Use Heikken Ashi Candles')
 useAltTF = input(true, title='Use Alt Timeframe')

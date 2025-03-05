@@ -1,0 +1,99 @@
+//@version=4
+strategy(title='[STRATEGY][RS]ZigZag PA Strategy V4.1 Penguin', shorttitle='RS', overlay=true, pyramiding=0, initial_capital=1000, commission_value=0.05)
+
+useAltTF = input(true, title='Use Alt Timeframe')
+tf = input('60', title='Alt Timeframe')
+leverage = input(title='leverage', type=input.float, defval=1.0)
+showPatterns = input(true, title='Show Patterns')
+showFib0000 = input(title='Display Fibonacci 0.000:', type=input.bool, defval=true)
+showFib0236 = input(title='Display Fibonacci 0.236:', type=input.bool, defval=true)
+showFib0382 = input(title='Display Fibonacci 0.382:', type=input.bool, defval=true)
+showFib0500 = input(title='Display Fibonacci 0.500:', type=input.bool, defval=true)
+showFib0618 = input(title='Display Fibonacci 0.618:', type=input.bool, defval=true)
+showFib0764 = input(title='Display Fibonacci 0.764:', type=input.bool, defval=true)
+showFib1000 = input(title='Display Fibonacci 1.000:', type=input.bool, defval=true)
+
+zigzag() =>
+    var _direction = 0
+    _isUp = close >= open
+    _isDown = close <= open
+    highestValue = highest(2) // 提取最高值計算
+    lowestValue = lowest(2)   // 提取最低值計算
+    _direction := _isUp[1] and _isDown ? -1 : _isDown[1] and _isUp ? 1 : _direction[1]
+    _zigzag = _isUp[1] and _isDown and _direction[1] != -1 ? highestValue : _isDown[1] and _isUp and _direction[1] != 1 ? lowestValue : na
+
+
+sz = useAltTF ? security(syminfo.tickerid, tf, zigzag()) : zigzag()
+
+plot(sz, title='zigzag', color=color.black, linewidth=2)
+
+// Pattern Recognition
+x = valuewhen(not na(sz), sz, 4)
+a = valuewhen(not na(sz), sz, 3)
+b = valuewhen(not na(sz), sz, 2)
+c = valuewhen(not na(sz), sz, 1)
+d = valuewhen(not na(sz), sz, 0)
+
+xab = abs(b - a) / abs(x - a)
+xad = abs(a - d) / abs(x - a)
+abc = abs(b - c) / abs(a - b)
+bcd = abs(c - d) / abs(b - c)
+
+// Functions
+definePattern(xabCondition, abcCondition, bcdCondition, xadCondition, _mode, cmpCondition) =>
+    xabCondition and abcCondition and bcdCondition and xadCondition and cmpCondition
+
+// 定義通用的模式檢查函數
+isPattern(_xab, _abc, _bcd, _xad, _mode) =>
+    _xab and _abc and _bcd and _xad and (_mode == 1 ? d < c : d > c)
+
+// 定義具體的模式檢查 (Bat)
+isBat(_mode) =>
+    _xab = xab >= 0.382 and xab <= 0.5
+    _abc = abc >= 0.382 and abc <= 0.886
+    _bcd = bcd >= 1.618 and bcd <= 2.618
+    _xad = xad <= 1.000
+    isPattern(_xab, _abc, _bcd, _xad, _mode)
+
+
+
+isGartley(_mode) =>
+    _xab = xab >= 0.5 and xab <= 0.618
+    _abc = abc >= 0.382 and abc <= 0.886
+    _bcd = bcd >= 1.13 and bcd <= 2.618
+    _xad = xad >= 0.75 and xad <= 0.875
+    isPattern(_xab, _abc, _bcd, _xad, _mode)
+
+
+// Add other patterns similarly using isPattern and definePattern
+
+plotshape(not showPatterns ? na : isBat(-1), style=shape.labeldown, location=location.top, color=color.maroon, text="Bat")
+plotshape(not showPatterns ? na : isGartley(-1), style=shape.labeldown, location=location.top, color=color.maroon, text="Gartley")
+
+// Fibonacci Levels
+fib_range = abs(d - c)
+fib_0000 = d > c ? d - (fib_range * 0.000) : d + (fib_range * 0.000)
+fib_0236 = d > c ? d - (fib_range * 0.236) : d + (fib_range * 0.236)
+fib_0382 = d > c ? d - (fib_range * 0.382) : d + (fib_range * 0.382)
+fib_0500 = d > c ? d - (fib_range * 0.500) : d + (fib_range * 0.500)
+fib_0618 = d > c ? d - (fib_range * 0.618) : d + (fib_range * 0.618)
+fib_0764 = d > c ? d - (fib_range * 0.764) : d + (fib_range * 0.764)
+fib_1000 = d > c ? d - (fib_range * 1.000) : d + (fib_range * 1.000)
+
+// 分別繪製每個 Fibonacci Level
+plot(fib_0000, title='Fib 0.000', color=color.black)
+plot(fib_0236, title='Fib 0.236', color=color.red)
+plot(fib_0382, title='Fib 0.382', color=color.olive)
+plot(fib_0500, title='Fib 0.500', color=color.lime)
+plot(fib_0618, title='Fib 0.618', color=color.teal)
+plot(fib_0764, title='Fib 0.764', color=color.blue)
+plot(fib_1000, title='Fib 1.000', color=color.black)
+f_last_fib(_rate)=>d > c ? d-(fib_range*_rate):d+(fib_range*_rate)
+// Entry and Exit Logic
+defineTradeConditions(entryCondition, closeCondition, label, direction) =>
+    strategy.entry(label, direction, when=entryCondition)
+    strategy.close(label, when=closeCondition)
+
+target01_buy_entry = (isBat(1) or isGartley(1)) and close <= f_last_fib(0.236)
+target01_buy_close = high >= f_last_fib(0.618) or low <= f_last_fib(-0.236)
+defineTradeConditions(target01_buy_entry, target01_buy_close, "target01_buy", strategy.long)

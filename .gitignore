@@ -178,3 +178,12 @@ pyrightconfig.json
 Ctrl + `
 
 *.pth
+FinTechML/Hw4/correlationDataset/*
+FinTechML/mid/KOPEPEresult/*
+FinTechML/mid/TSMCMediaTekresult/*
+ML/HmmFSMGa/result/*
+
+*.rar
+*.zip
+*.tar
+*.tar.gz

@@ -134,7 +134,7 @@ def main():
         all_results.append({
             'Train_Years': f"{train_df['Year'].min()}-{train_df['Year'].max()}",
             'Test_Years': f"{test_df['Year'].min()}-{test_df['Year'].max()}",
-            'Test_Final_Value': round(test_value, 2),
+            'Strategy_Final_Value': round(test_value, 2),
             'Hold_Final_Value': round(hold_value, 2)
         })
 
@@ -148,7 +148,7 @@ def main():
         train_range = list(map(int, row['Train_Years'].split('-')))
         test_years = test_range[1] - test_range[0] + 1
         # train_years = train_range[1] - train_range[0] + 1
-        test_return = (row['Test_Final_Value'] / 10_000) ** (1 / test_years) - 1
+        test_return = (row['Strategy_Final_Value'] / 10_000) ** (1 / test_years) - 1
         hold_return = (row['Hold_Final_Value'] / 10_000) ** (1 / test_years) - 1
         test_returns.append(test_return * 100)
         hold_returns.append(hold_return * 100)

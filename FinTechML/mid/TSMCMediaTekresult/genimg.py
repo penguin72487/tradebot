@@ -1,11 +1,22 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import matplotlib.dates as mdates  # 加這一行在最上面
+
 
 def plot_annual_return_summary():
     # 讀取 annual return 資料
-    summary_path = os.path.join("FinTechML", "mid", "TSMCMediaTekresult", "annual_return_summary_with_hold.csv")
-    df = pd.read_csv(summary_path)
+    base_dir = os.path.join("FinTechML", "mid", "TSMCMediaTekresult")
+    summary_path = os.path.join(base_dir, "annual_return_summary_with_hold.csv")
+    normal_path = os.path.join(base_dir, "train_test_results.csv")
+    
+    # 讀取資料
+    df_main = pd.read_csv(summary_path)
+    df_normal = pd.read_csv(normal_path)
+
+    # 合併資料（以 Train_Years 和 Test_Years 為主鍵）
+
+    df = pd.merge(df_main, df_normal, on=["Train_Years", "Test_Years"], how="left")
 
     # 計算 Test 年數
     df['Test_Years_Length'] = df['Test_Years'].apply(lambda x: int(x.split('-')[1]) - int(x.split('-')[0]) + 1)
@@ -13,16 +24,16 @@ def plot_annual_return_summary():
     # 計算年化報酬率
     df['Strategy_Annual_Return'] = (df['Strategy_Final_Value'] / 10000) ** (1 / df['Test_Years_Length']) - 1
     df['Hold_Annual_Return'] = (df['Hold_Final_Value'] / 10000) ** (1 / df['Test_Years_Length']) - 1
-    df['Test_Annual_Return'] = (df['Test_Final_Value'] / 10000) ** (1 / df['Test_Years_Length']) - 1
+    df['Normal_Annual_Return'] = (df['Normal_Final_Value'] / 10000) ** (1 / df['Test_Years_Length']) - 1
 
     # 畫圖
     plt.figure(figsize=(14, 6))
-    plt.plot(df['Train_Years'], df['Strategy_Annual_Return'], label='Strategy Annual Return', marker='o')
-    plt.plot(df['Train_Years'], df['Hold_Annual_Return'], label='Hold Annual Return', marker='o')
-    plt.plot(df['Train_Years'], df['Test_Annual_Return'], label='Test Annual Return', marker='o')
+    plt.plot(df['Test_Years'], df['Strategy_Annual_Return'], label='Strategy Annual Return', marker='o')
+    plt.plot(df['Test_Years'], df['Hold_Annual_Return'], label='Hold Annual Return', marker='o')
+    plt.plot(df['Test_Years'], df['Normal_Annual_Return'], label='Normal Annual Return', marker='o')
 
     plt.title('Annualized Return Comparison')
-    plt.xlabel('Train Years')
+    plt.xlabel('Test_Years')
     plt.ylabel('Annual Return')
     plt.xticks(rotation=45)
     plt.legend()
@@ -59,9 +70,13 @@ def plot_combined_cumulative_return():
     plt.figure(figsize=(14, 6))
     plt.plot(df['time'], df['strategy_value'], label='Strategy', color='blue')
     plt.plot(df['time'], df['hold_value'], label='Hold', color='green')
-    plt.plot(df['time'], df['test_value'], label='Test', color='orange')
+    # plt.plot(df['time'], df['test_value'], label='Normal', color='orange')
 
-    plt.title('Cumulative Return Comparison (Strategy vs Hold vs Test)')
+    # 設定 X 軸只顯示年份
+    plt.gca().xaxis.set_major_locator(mdates.YearLocator())         # 每年顯示一個
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y')) # 格式是「年」
+
+    plt.title('Cumulative Return Comparison (Strategy vs Hold vs Normal)')
     plt.xlabel('Date')
     plt.ylabel('Value')
     plt.legend()

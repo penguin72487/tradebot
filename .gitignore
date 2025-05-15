@@ -187,3 +187,4 @@ ML/HmmFSMGa/result/*
 *.zip
 *.tar
 *.tar.gz
+ML/HmmFSMGa/*.csv

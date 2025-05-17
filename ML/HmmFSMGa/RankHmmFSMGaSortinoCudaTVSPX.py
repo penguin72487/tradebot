@@ -38,21 +38,13 @@ from RankHmmFSMGaCuda import plot_results
 # def plot_results(result_df, save_path):
 
 
-def simulate_returns_from_probs(state_probs, weights, returns):
-    # 每一根K線上的期望倉位（權重加權）
-    positions = np.dot(state_probs, weights)
-    daily_returns = positions * returns
-    return daily_returns
-
-
-
 # ======== 1. 資料處理（Rank Normalization） ========
 
 from RankHmmFSMGaCuda import rank_normalize
 # def rank_normalize(series):
 
 from RankHmmFSMGaCuda import preprocess
-# def preprocess(df):
+# def preprocess(df, features=None):
 
 # ======== 2. 構建 GaussianHMM 模型 ========
 
@@ -68,8 +60,13 @@ from RankHmmFSMGaCuda import simulate_returns
 from RankHmmFSMGaCuda import compute_fitness
 # def compute_fitness(weights, states, returns):
 
+from RankHmmFSMGaCuda import compute_sortino_fitness
+
 from RankHmmFSMGaCuda import compute_sharpe_ratio
 # def compute_sharpe_ratio(daily_returns):
+
+from RankHmmFSMGaCuda import compute_sortino_ratio
+
 
 # ======== 4. 基因演算法 GA ========
 
@@ -77,6 +74,8 @@ from RankHmmFSMGaCuda import evaluate_population
 # def evaluate_population(pop, states, returns):
 from RankHmmFSMGaCuda import torch_ga_optimize
 # def torch_ga_optimize(states, returns, n_states=5, generations=50, population_size=1024):
+from RankHmmFSMGaCuda import torch_ga_optimize_sortino
+# def torch_ga_optimize_sortino(states, returns, n_states=5, generations=50, population_size=1024):
 
 
 # ======== 6. 主程式入口 ========
@@ -91,27 +90,28 @@ def run_model():
     os.makedirs(result_dir, exist_ok=True)
 
     # 輸入與輸出路徑
-    input_path = os.path.join(base_dir, "BITSTAMP_BTCUSD,240more.csv")
+    input_path = os.path.join(base_dir, "SP_SPX, 1D.csv")
     output_path = os.path.join(result_dir, "hmm_fsm_ga_result_summary.csv")
 
     df = pd.read_csv(input_path)
-    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
-    df, features = preprocess(df, cols)
+    
+    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+    df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['close'].pct_change().fillna(0).values
 
     results = []
 
-    for n_states in range(79, 1001):
+    for n_states in range(16, 1001):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize(states, returns, n_states=n_states)
+            best_weights = torch_ga_optimize_sortino(states, returns, n_states=n_states)
             final_returns = simulate_returns(states, best_weights, returns)
 
             df['state'] = states
             df['strategy_return'] = final_returns
-            sharpe = compute_sharpe_ratio(final_returns)
+            sortino = compute_sortino_ratio(final_returns)
             cumulative_return = (1 + pd.Series(final_returns)).cumprod().iloc[-1]
             buy_and_hold_return = df['close'].iloc[-1] / df['close'].iloc[0] - 1
 
@@ -120,12 +120,12 @@ def run_model():
             os.makedirs(n_state_dir, exist_ok=True)
 
             # 存圖
-            plot_strategy_curve(df, n_states, n_state_dir, sharpe, buy_and_hold_return, best_weights)
+            plot_strategy_curve(df, n_states, n_state_dir, sortino, buy_and_hold_return, best_weights)
 
             # 存結果
             result = {
                 "n_states": n_states,
-                "sharpe_ratio": sharpe,
+                "sortino_ratio": sortino,
                 "cumulative_return": cumulative_return,
                 "buy_and_hold_return": buy_and_hold_return,
                 "weights": best_weights
@@ -134,10 +134,11 @@ def run_model():
             results.append(result)
             pd.DataFrame(results).to_csv(os.path.join(n_state_dir, "summary.csv"), index=False)
             pd.DataFrame(results).to_csv(output_path, index=False)
-            print(f" ✅ n_states = {n_states} 完成！ Sharpe = {sharpe:.4f}, 累計報酬 = {cumulative_return:.4f}, 買進持報酬 = {buy_and_hold_return:.4f}")
+            print(f" ✅ n_states = {n_states} 完成！ Sharpe = {sortino:.4f}, 累計報酬 = {cumulative_return:.4f}, 買進持報酬 = {buy_and_hold_return:.4f}")
 
             # 🧪 執行交叉測試，結果也存到對應資料夾下
-            cross_val_model(df.copy(), n_states=n_states, result_dir=n_state_dir)
+            cross_val_model_by_expanding_train(df.copy(), n_states=n_states, result_dir=n_state_dir)
+
 
         except Exception as e:
             print(f"⚠️ 發生錯誤 @ n_states = {n_states}：{e}")
@@ -148,30 +149,34 @@ def run_model():
     plot_results(pd.DataFrame(results), output_path)
 
 
-def cross_val_model(df, n_states=5, result_dir=None):
+def cross_val_model_by_expanding_train(df, n_states=5, result_dir=None):
     if result_dir is None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
         script_name = os.path.splitext(os.path.basename(__file__))[0]
-        result_dir = os.path.join(base_dir, "result", f"{script_name}_crossval")
+        result_dir = os.path.join(base_dir, "result", f"{script_name}_crossval_expanding")
 
-    # result_dir = os.path.join(result_dir, f"crossval_n{n_states}")
-    # os.makedirs(result_dir, exist_ok=True)
-
-    df, features = preprocess(df)
+    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+    df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['close'].pct_change().fillna(0).values
     close_prices = df['close'].values
 
-    # 切分資料
-    splits = np.array_split(np.arange(len(X)), 10)
+    df['year'] = pd.to_datetime(df['time'], unit='s').dt.year
+    unique_years = sorted(df['year'].unique())
 
     results = []
 
-    for i in range(1, 10):  # i = 訓練資料份數
-        train_idx = np.concatenate(splits[:i])
-        test_idx = np.concatenate(splits[i:])
+    for i in range(1, len(unique_years)):
+        train_years = unique_years[:i]
+        test_years = unique_years[i:]
 
-        print(f"🧪 測試集編號 {i}：訓練={train_idx.shape[0]} 筆，測試={test_idx.shape[0]} 筆")
+        train_idx = df[df['year'].isin(train_years)].index
+        test_idx = df[df['year'].isin(test_years)].index
+
+        if len(train_idx) < 50 or len(test_idx) < 10:
+            continue
+
+        print(f"🧪 訓練年份 {train_years[0]} ~ {train_years[-1]}，測試 {test_years[0]} ~ {test_years[-1]}：訓練 {len(train_idx)} 筆，測試 {len(test_idx)} 筆")
 
         X_train, X_test = X[train_idx], X[test_idx]
         returns_train, returns_test = returns[train_idx], returns[test_idx]
@@ -180,84 +185,77 @@ def cross_val_model(df, n_states=5, result_dir=None):
             hmm_model, train_states = train_hmm(X_train, n_states=n_states)
             test_states = hmm_model.predict(X_test)
 
-            best_weights = torch_ga_optimize(train_states, returns_train, n_states=n_states)
+            best_weights = torch_ga_optimize_sortino(train_states, returns_train, n_states=n_states)
             test_strategy_returns = best_weights[test_states] * returns_test
 
-            # 計算年化報酬率
             strategy_cum_return = (1 + test_strategy_returns).prod()
-            test_days = len(test_strategy_returns)
-            annual_freq = 6 * 365  # 4小時一根，一年2190根
-            
-            strategy_annual_return = strategy_cum_return**(annual_freq / test_days) - 1
-            # 計算 Buy & Hold 年化報酬率
+            years_tested = len(test_years)
+
+            strategy_annual_return = strategy_cum_return**(1 / years_tested) - 1
             buy_hold_return = close_prices[test_idx[-1]] / close_prices[test_idx[0]] - 1
-            buy_hold_annual_return = (1 + buy_hold_return)**(annual_freq / test_days) - 1
-            sharpe = compute_sharpe_ratio(test_strategy_returns)
+            buy_hold_annual_return = (1 + buy_hold_return)**(1 / years_tested) - 1
+            sortino = compute_sortino_ratio(test_strategy_returns)
 
             results.append({
-                "test_split": i,
+                "train_years": f"{train_years[0]}–{train_years[-1]}",
+                "test_years": f"{test_years[0]}–{test_years[-1]}",
                 "strategy_ann_return": strategy_annual_return,
                 "buy_hold_ann_return": buy_hold_annual_return,
-                "sharpe_ratio": sharpe
+                "sortino_ratio": sortino
             })
 
-
-            print(f"✅ 測試集 {i}：夏普率 = {sharpe:.4f}, 策略年化報酬 = {strategy_annual_return:.4f}, 買進持有年化報酬 = {buy_hold_annual_return:.4f}")
+            print(f"✅ 完成：SR = {sortino:.4f}, 策略年化 = {strategy_annual_return:.4f}, B&H年化 = {buy_hold_annual_return:.4f}")
 
         except Exception as e:
-            print(f"⚠️ 發生錯誤 @ 測試集 {i}：{e}")
+            print(f"⚠️ 發生錯誤 @ 測試年份 {test_years[0]}~{test_years[-1]}：{e}")
             continue
 
-    # 存結果
+    # 儲存
     result_df = pd.DataFrame(results)
-    result_path = os.path.join(result_dir, "crossval_summary.csv")
-    result_df.to_csv(result_path, index=False)
+    result_df.to_csv(os.path.join(result_dir, "crossval_expanding_summary.csv"), index=False)
 
-    # 畫圖：年化報酬率 + 夏普率標註
+    # 畫圖
     import matplotlib.pyplot as plt
-
     strategy_logs, strategy_neg_mask = signed_log10_points(result_df["strategy_ann_return"].values)
     buyhold_logs, buyhold_neg_mask = signed_log10_points(result_df["buy_hold_ann_return"].values)
 
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(12, 6), dpi=1000)  # 🎯 dpi 調高解析度
+    x_labels = result_df["test_years"]
 
-    # 正值 log10 線
-    plt.plot(result_df["test_split"], strategy_logs, label="Strategy", marker='o')
-    plt.plot(result_df["test_split"], buyhold_logs, label="Buy & Hold", marker='x')
+    plt.plot(x_labels, strategy_logs, label="Strategy", marker='o')
+    plt.plot(x_labels, buyhold_logs, label="Buy & Hold", marker='x')
 
-    # 負值紅色點
-    plt.scatter(result_df["test_split"][strategy_neg_mask], 
-                result_df["strategy_ann_return"][strategy_neg_mask], 
+    plt.scatter(x_labels[strategy_neg_mask],
+                result_df["strategy_ann_return"][strategy_neg_mask],
                 color='red', label="Strategy (Loss)", marker='o')
 
-    plt.scatter(result_df["test_split"][buyhold_neg_mask], 
-                result_df["buy_hold_ann_return"][buyhold_neg_mask], 
+    plt.scatter(x_labels[buyhold_neg_mask],
+                result_df["buy_hold_ann_return"][buyhold_neg_mask],
                 color='red', label="Buy & Hold (Loss)", marker='x')
 
-    # 標註 Sharpe Ratio
-        # Sharpe Ratio 標註（跟 log 值對齊）
     for idx, row in result_df.iterrows():
         y_val = np.nan
         if row["strategy_ann_return"] > 0:
             y_val = np.log10(row["strategy_ann_return"] + 1e-8)
         elif row["strategy_ann_return"] < 0:
-            y_val = row["strategy_ann_return"]  # 負值時照原樣顯示
+            y_val = row["strategy_ann_return"]
 
         if not np.isnan(y_val):
-            plt.text(row["test_split"], y_val + 0.05,  # 上移一點
-                     f"SR={row['sharpe_ratio']:.2f}",
+            plt.text(x_labels[idx], y_val + 0.05,
+                     f"SR={row['sortino_ratio']:.2f}",
                      fontsize=8, ha='center', color='blue')
 
-
-    plt.xlabel("Test Split Index")
+    plt.xlabel("Training Years")
     plt.ylabel("Log10 Annualized Return")
-    plt.title("Strategy vs Buy & Hold Annual Return log10 (with Sharpe)")
+    plt.title("Expanding-Train Cross-Validation: Strategy vs Buy & Hold")
     plt.legend()
     plt.grid(True)
+    plt.xticks(rotation=90, fontsize=8)
     plt.tight_layout()
-    plt.savefig(os.path.join(result_dir, "annualized_return_comparison.png"))
+    plt.savefig(os.path.join(result_dir, "annualized_return_expanding_train.png"))
     plt.close()
-    print("📈 測試集結果圖完成～喵！")
+    print("📈 Expanding 測試圖完成囉～來抱一下喵 💞")
+
 
 
 

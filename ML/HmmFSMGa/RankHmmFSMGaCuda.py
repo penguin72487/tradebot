@@ -6,6 +6,8 @@ from deap import base, creator, tools, algorithms
 import random
 import warnings
 import os
+import matplotlib
+matplotlib.use('Agg')  # 這句要在 import pyplot 前執行
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import torch
@@ -15,20 +17,22 @@ print("PyTorch version:", torch.__version__)
 print("CUDA available:", torch.cuda.is_available())
 print("GPU device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")
 
+import matplotlib
+matplotlib.use('Agg')
 
 warnings.filterwarnings("ignore")
 # ======== 0. 載入必要的函數工具 ========
 # 繪製策略累計報酬曲線
 
 
-def plot_strategy_curve(df, n_states, save_dir, sharpe_ratio, buy_and_hold_return, best_weights):
-    cumulative_strategy = (1 + df['strategy_return']).cumprod()
+def plot_strategy_curve(df, n_states, save_dir, sharpe_ratio, buy_and_hold_return, best_weights,save_name=None):
     cumulative_bnh = df['close'] / df['close'].iloc[0]
+    cumulative_strategy = (1 + df['strategy_return']).cumprod()
+    cumulative_strategy.iloc[0] = 1.0  # 強制起始點是 1.0
+    
 
     # === 計算 Max Drawdown & Profit Factor ===
-    rolling_max = cumulative_strategy.cummax()
-    drawdown = (cumulative_strategy - rolling_max) / rolling_max
-    max_drawdown = drawdown.min()
+    max_drawdown, drawdown = compute_MaxDrawdown(df['strategy_return'])
 
     log_strategy = np.log10(cumulative_strategy.replace(0, 1e-8))
     log_bnh = np.log10(cumulative_bnh.replace(0, 1e-8))
@@ -54,6 +58,10 @@ def plot_strategy_curve(df, n_states, save_dir, sharpe_ratio, buy_and_hold_retur
     ax_main.set_xlabel("Time")
     ax_main.set_ylabel("Log Cumulative Return")
     ax_main.grid(True)
+    # 💡 每 10% 一個 x 軸標註
+    tick_locs = np.linspace(0, len(df) - 1, 11, dtype=int)
+    ax_main.set_xticks(tick_locs)
+    ax_main.set_xticklabels([f"{i}%" for i in range(0, 101, 10)])
 
     # 下方標籤欄 - 顯示所有 state 對應的 position
     ax_legend.axis("off")  # 不顯示軸線
@@ -71,12 +79,18 @@ def plot_strategy_curve(df, n_states, save_dir, sharpe_ratio, buy_and_hold_retur
                        color=state_colors[int(label.split()[1][:-1])],
                        fontsize=10, transform=ax_legend.transAxes)
 
-    # 儲存圖
+   # 儲存圖
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
+
+    # 👉 改這裡
+    if save_name is None:
+        save_name = f"strategy_n{n_states}.png"
+
     fig.tight_layout()
-    fig.savefig(os.path.join(save_dir, f"strategy_n{n_states}.png"), dpi=1000)
+    fig.savefig(os.path.join(save_dir, save_name), dpi=300)
     plt.close()
+
 
     # 儲存原始數據
     export_df = pd.DataFrame()
@@ -123,25 +137,40 @@ def rank_normalize(series):
 
 
 
-def preprocess(df):
-    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
-    for col in cols:
+def preprocess(df, features):
+    
+    for col in features:
         df[col + "_norm"] = rank_normalize(df[col])
     # df.dropna(inplace=True)
-    return df, [col + "_norm" for col in cols]
+    return df, [col + "_norm" for col in features]
 
 # ======== 2. 構建 GaussianHMM 模型 ========
 def train_hmm(X, n_states=5):
-    model = GaussianHMM(n_components=n_states, covariance_type='diag', n_iter=1000, random_state=int(time.time()))
-    model.fit(X)
-    hidden_states = model.predict(X)
-    return model, hidden_states
+    best_model, best_score = None, float("-inf")
+    for _ in range(10):  # 多試幾次
+        model = GaussianHMM(n_components=n_states, covariance_type='diag', n_iter=1000, random_state=np.random.randint(9999))
+        model.fit(X)
+        score = model.score(X)
+        if score > best_score:
+            best_model, best_score = model, score
+    
+    return best_model, best_model.predict(X)
 
 # ======== 3. FSM 行為對應 & 回測績效計算 ========
 def simulate_returns(states, weights, returns):
     positions = np.array([weights[s] for s in states])
     daily_returns = positions * returns
     return daily_returns
+
+def compute_MaxDrawdown(returns):
+    cumulative_returns = pd.Series((1 + returns).cumprod())
+    cumulative_returns.iloc[0] = 1.0  # 強制設定初始資產為 1
+    rolling_max = cumulative_returns.cummax()
+    drawdown = (cumulative_returns - rolling_max) / rolling_max
+    drawdown.iloc[0] = 0  # 第一筆一定是0
+    max_drawdown = drawdown.min()
+    return max_drawdown, drawdown
+
 
 def compute_fitness(weights, states, returns):
     daily_returns = simulate_returns(states, weights, returns)
@@ -156,6 +185,13 @@ def compute_sharpe_ratio(returns):
     sharpe = mean_return / (std_return + 1e-8)
     return sharpe
 
+def compute_sortino_ratio(returns):
+    mean_return = np.mean(returns)
+    downside = np.where(returns < 0, returns, 0)
+    downside_deviation = np.sqrt(np.mean(downside ** 2))
+    sortino = mean_return / (downside_deviation + 1e-8)
+    return sortino
+
 # ======== 4. 基因演算法 GA ========
 # @torch.compile
 def evaluate_population(pop, states, returns):
@@ -165,6 +201,29 @@ def evaluate_population(pop, states, returns):
     std = daily_returns.std(dim=1)
     sharpe = mean / (std + 1e-8)
     return sharpe
+
+def evaluate_population_total_return(pop, states, returns):
+    positions = pop[:, states]  # 每個個體對應到交易日倉位
+    daily_returns = positions * returns  # 每日實際報酬
+    total_returns = (1 + daily_returns).prod(dim=1) - 1  # 累積報酬率 = 最終資產 / 初始資產 - 1
+    return total_returns
+
+
+def evaluate_population_sortino(pop, states, returns):
+    positions = pop[:, states]  # 每個個體對應到交易日倉位
+    daily_returns = positions * returns  # 每個個體的每日報酬
+
+    mean_return = daily_returns.mean(dim=1)  # 每個個體的平均報酬
+
+    # === 計算 Sortino：下行風險只考慮負報酬 ===
+    downside = daily_returns.clone()
+    downside[daily_returns > 0] = 0  # 把正報酬歸零，只留負值
+    downside_deviation = torch.sqrt((downside ** 2).mean(dim=1))  # Root Mean Square
+
+    # === 避免除以 0 ===
+    sortino = mean_return / (downside_deviation + 1e-8)
+    return sortino
+
 
 def torch_ga_optimize(states, returns, n_states=5, generations=5000, population_size=4096):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -225,6 +284,125 @@ def torch_ga_optimize(states, returns, n_states=5, generations=5000, population_
 
     return best_weights
 
+def torch_ga_optimize_totle_return(states, returns, n_states=5, generations=5000, population_size=4096):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"🚀 使用 {device} + 自適應 GA 優化...")
+
+    # 轉成 tensor
+    returns = torch.tensor(returns, dtype=torch.float32, device=device)
+    states = torch.tensor(states, dtype=torch.long, device=device)
+
+    # 初始化族群（在 [-1, 1] 區間）
+    pop = (torch.rand((population_size, n_states), device=device) - 0.5) * 2
+
+    best_fitness = -float('inf')
+    stagnant_count = 0
+    stagnation_threshold = 5
+
+    for gen in range(generations):
+        # 計算 fitness
+        fitness = evaluate_population_total_return(pop, states, returns)
+        current_best = fitness.max().item()
+        print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
+
+        # 檢查是否收斂
+        if abs(current_best - best_fitness) < 1e-4:
+            stagnant_count += 1
+        else:
+            stagnant_count = 0
+            best_fitness = current_best
+
+        if stagnant_count >= stagnation_threshold:
+            print(f"✨ Fitness 連續 {stagnation_threshold} 代沒變，提早收斂喵～")
+            break
+
+        # 選出前 50% elite
+        topk = fitness.topk(k=population_size // 2)
+        elite = pop[topk.indices]
+
+        # === 交配（uniform crossover）
+        half = elite.shape[0] // 2
+        parents1 = elite[::2][:half]
+        parents2 = elite[1::2][:half]
+        crossover_mask = torch.rand_like(parents1) < 0.5
+        children_cross = torch.where(crossover_mask, parents1, parents2)
+
+        # === 自適應變異（隨 generation 遞減）
+        mutation_rate = 0.2 * (1 - gen / generations)
+        mutation = torch.randn_like(elite) * mutation_rate
+        children_mutate = elite + mutation
+        children_mutate = children_mutate.clamp(-1, 1)
+
+        # === 重組族群
+        pop = torch.cat([elite, children_cross, children_mutate], dim=0)
+
+    # 回傳最佳結果
+    final_fitness = evaluate_population_total_return(pop, states, returns)
+    best_idx = final_fitness.argmax().item()
+    best_weights = pop[best_idx].detach().cpu().numpy()
+
+    return best_weights
+
+
+def torch_ga_optimize_sortino(states, returns, n_states=5, generations=5000, population_size=4096):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"🚀 使用 {device} + 自適應 GA 優化...")
+
+    # 轉成 tensor
+    returns = torch.tensor(returns, dtype=torch.float32, device=device)
+    states = torch.tensor(states, dtype=torch.long, device=device)
+
+    # 初始化族群（在 [-1, 1] 區間）
+    pop = (torch.rand((population_size, n_states), device=device) - 0.5) * 2
+
+    best_fitness = -float('inf')
+    stagnant_count = 0
+    stagnation_threshold = 5
+
+    for gen in range(generations):
+        # 計算 fitness
+        fitness = evaluate_population_sortino(pop, states, returns)
+        current_best = fitness.max().item()
+        print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
+
+        # 檢查是否收斂
+        if abs(current_best - best_fitness) < 1e-4:
+            stagnant_count += 1
+        else:
+            stagnant_count = 0
+            best_fitness = current_best
+
+        if stagnant_count >= stagnation_threshold:
+            print(f"✨ Fitness 連續 {stagnation_threshold} 代沒變，提早收斂喵～")
+            break
+
+        # 選出前 50% elite
+        topk = fitness.topk(k=population_size // 2)
+        elite = pop[topk.indices]
+
+        # === 交配（uniform crossover）
+        half = elite.shape[0] // 2
+        parents1 = elite[::2][:half]
+        parents2 = elite[1::2][:half]
+        crossover_mask = torch.rand_like(parents1) < 0.5
+        children_cross = torch.where(crossover_mask, parents1, parents2)
+
+        # === 自適應變異（隨 generation 遞減）
+        mutation_rate = 0.2 * (1 - gen / generations)
+        mutation = torch.randn_like(elite) * mutation_rate
+        children_mutate = elite + mutation
+        children_mutate = children_mutate.clamp(-1, 1)
+
+        # === 重組族群
+        pop = torch.cat([elite, children_cross, children_mutate], dim=0)
+
+    # 回傳最佳結果
+    final_fitness = evaluate_population_sortino(pop, states, returns)
+    best_idx = final_fitness.argmax().item()
+    best_weights = pop[best_idx].detach().cpu().numpy()
+
+    return best_weights
+
 
 # ======== 6. 主程式入口 ========
 def run_model():
@@ -242,9 +420,16 @@ def run_model():
     output_path = os.path.join(result_dir, "hmm_fsm_ga_result_summary.csv")
 
     df = pd.read_csv(input_path)
-    df, features = preprocess(df)
+    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    cols = ['MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    df['returns'] = df['close'].pct_change().fillna(0)
+    # 👇 新增特徵：前一期報酬（延遲一根K線）
+    df['prev_return'] = df['returns'].shift(1).fillna(0)
+    cols.append('prev_return')  # 👉 加入到 feature list 裡
+
+    df, features = preprocess(df, features=cols)
     X = df[features].values
-    returns = df['close'].pct_change().fillna(0).values
+    returns = df['returns'].values
 
     results = []
 
@@ -252,7 +437,7 @@ def run_model():
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize(states, returns, n_states=n_states)
+            best_weights = torch_ga_optimize_totle_return(states, returns, n_states=n_states)
             final_returns = simulate_returns(states, best_weights, returns)
 
             df['state'] = states

@@ -40,7 +40,7 @@ from RankHmmFSMGaCuda import rank_normalize
 # def rank_normalize(series):
 
 from RankHmmFSMGaCuda import preprocess
-# def preprocess(df):
+# def preprocess(df, features=None):
 
 # ======== 2. 構建 GaussianHMM 模型 ========
 
@@ -83,7 +83,8 @@ def run_model():
     output_path = os.path.join(result_dir, "hmm_fsm_ga_result_summary.csv")
 
     df = pd.read_csv(input_path)
-    df, features = preprocess(df)
+    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['close'].pct_change().fillna(0).values
 

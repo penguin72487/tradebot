@@ -38,13 +38,6 @@ from RankHmmFSMGaCuda import plot_results
 # def plot_results(result_df, save_path):
 
 
-def simulate_returns_from_probs(state_probs, weights, returns):
-    # 每一根K線上的期望倉位（權重加權）
-    positions = np.dot(state_probs, weights)
-    daily_returns = positions * returns
-    return daily_returns
-
-
 
 # ======== 1. 資料處理（Rank Normalization） ========
 
@@ -78,6 +71,71 @@ from RankHmmFSMGaCuda import evaluate_population
 from RankHmmFSMGaCuda import torch_ga_optimize
 # def torch_ga_optimize(states, returns, n_states=5, generations=50, population_size=1024):
 
+from RankHmmFSMGaCuda import torch_ga_optimize_totle_return
+# def torch_ga_optimize_totle_return(states, returns, n_states=5, generations=50, population_size=1024):
+
+def cross_val_worker(i, X, returns, close_prices, splits, n_states):
+    train_idx = np.concatenate(splits[:i])
+    test_idx = np.concatenate(splits[i:])
+    X_train, X_test = X[train_idx], X[test_idx]
+    returns_train, returns_test = returns[train_idx], returns[test_idx]
+
+    print(f"🧪 測試集編號 {i}：訓練={train_idx.shape[0]} 筆，測試={test_idx.shape[0]} 筆")
+
+    try:
+        hmm_model, train_states = train_hmm(X_train, n_states=n_states)
+        test_states = hmm_model.predict(X_test)
+
+        best_weights = torch_ga_optimize_totle_return(train_states, returns_train, n_states=n_states)
+        test_strategy_returns = best_weights[test_states] * returns_test
+
+        strategy_cum_return = (1 + test_strategy_returns).prod()
+        test_days = len(test_strategy_returns)
+        annual_freq = 6 * 365
+
+        strategy_annual_return = strategy_cum_return**(annual_freq / test_days) - 1
+        buy_hold_return = close_prices[test_idx[-1]] / close_prices[test_idx[0]] - 1
+        buy_hold_annual_return = (1 + buy_hold_return)**(annual_freq / test_days) - 1
+        sharpe = compute_sharpe_ratio(test_strategy_returns)
+
+        print(f"✅ 測試集 {i}：夏普率 = {sharpe:.4f}, 策略年化報酬 = {strategy_annual_return:.4f}, 買進持有年化報酬 = {buy_hold_annual_return:.4f}")
+
+        return {
+            "test_split": i,
+            "strategy_ann_return": strategy_annual_return,
+            "buy_hold_ann_return": buy_hold_annual_return,
+            "sharpe_ratio": sharpe,
+            "df": pd.DataFrame({
+                "close": close_prices[test_idx],
+                "state": test_states,
+                "strategy_return": test_strategy_returns,
+            }),
+            "best_weights": best_weights
+        }
+
+
+    except Exception as e:
+        print(f"⚠️ 發生錯誤 @ 測試集 {i}：{e}")
+        return None
+
+def save_cv_plot(row, n_states, save_dir):
+    df_cv = row["df"].reset_index(drop=True)
+
+    plot_strategy_curve(
+        df_cv,
+        n_states=n_states,
+        save_dir=save_dir,
+        sharpe_ratio=row["sharpe_ratio"],
+        buy_and_hold_return=row["buy_hold_ann_return"],
+        best_weights=row["best_weights"]
+    )
+
+    # 避免覆蓋，每張圖重新命名
+    src = os.path.join(save_dir, f"strategy_n{n_states}.png")
+    dst = os.path.join(save_dir, f"cv_split_{row['test_split']}_n{n_states}.png")
+    if os.path.exists(src):
+        os.rename(src, dst)
+
 
 # ======== 6. 主程式入口 ========
 def run_model():
@@ -95,18 +153,24 @@ def run_model():
     output_path = os.path.join(result_dir, "hmm_fsm_ga_result_summary.csv")
 
     df = pd.read_csv(input_path)
-    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
-    df, features = preprocess(df, cols)
+    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    cols = ['MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    df['returns'] = df['close'].pct_change().fillna(0)
+    # 👇 新增特徵：前一期報酬（延遲一根K線）
+    df['prev_return'] = df['returns'].shift(1).fillna(0)
+    cols.append('prev_return')  # 👉 加入到 feature list 裡
+
+    df, features = preprocess(df, features=cols)
     X = df[features].values
-    returns = df['close'].pct_change().fillna(0).values
+    returns = df['returns'].values
 
     results = []
 
-    for n_states in range(79, 1001):
+    for n_states in range(13 , 1001):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize(states, returns, n_states=n_states)
+            best_weights = torch_ga_optimize_totle_return(states, returns, n_states=n_states)
             final_returns = simulate_returns(states, best_weights, returns)
 
             df['state'] = states
@@ -156,60 +220,54 @@ def cross_val_model(df, n_states=5, result_dir=None):
 
     # result_dir = os.path.join(result_dir, f"crossval_n{n_states}")
     # os.makedirs(result_dir, exist_ok=True)
-
-    df, features = preprocess(df)
+    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    cols = ['MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    df['returns'] = df['close'].pct_change().fillna(0)
+    # 👇 新增特徵：前一期報酬（延遲一根K線）
+    df['prev_return'] = df['returns'].shift(1).fillna(0)
+    cols.append('prev_return')  # 👉 加入到 feature list 裡
+    df, features = preprocess(df, features=cols)
     X = df[features].values
-    returns = df['close'].pct_change().fillna(0).values
+    returns = df['returns'].values
     close_prices = df['close'].values
 
     # 切分資料
     splits = np.array_split(np.arange(len(X)), 10)
 
     results = []
+    import concurrent.futures
 
-    for i in range(1, 10):  # i = 訓練資料份數
-        train_idx = np.concatenate(splits[:i])
-        test_idx = np.concatenate(splits[i:])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # 提交所有任務
+        futures = [
+            executor.submit(cross_val_worker, i, X, returns, close_prices, splits, n_states)
+            for i in range(1, 10)
+        ]
+        # 等待回傳
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
-        print(f"🧪 測試集編號 {i}：訓練={train_idx.shape[0]} 筆，測試={test_idx.shape[0]} 筆")
+    # 去除 None（失敗的結果）
+    results = [r for r in results if r is not None]
+    result_df = pd.DataFrame(results).sort_values("test_split")
+    # 每段畫圖
+    # 建立統一的儲存資料夾
+    cv_return_dir = os.path.join(result_dir, "cv_return")
+    os.makedirs(cv_return_dir, exist_ok=True)
 
-        X_train, X_test = X[train_idx], X[test_idx]
-        returns_train, returns_test = returns[train_idx], returns[test_idx]
-
-        try:
-            hmm_model, train_states = train_hmm(X_train, n_states=n_states)
-            test_states = hmm_model.predict(X_test)
-
-            best_weights = torch_ga_optimize(train_states, returns_train, n_states=n_states)
-            test_strategy_returns = best_weights[test_states] * returns_test
-
-            # 計算年化報酬率
-            strategy_cum_return = (1 + test_strategy_returns).prod()
-            test_days = len(test_strategy_returns)
-            annual_freq = 6 * 365  # 4小時一根，一年2190根
-            
-            strategy_annual_return = strategy_cum_return**(annual_freq / test_days) - 1
-            # 計算 Buy & Hold 年化報酬率
-            buy_hold_return = close_prices[test_idx[-1]] / close_prices[test_idx[0]] - 1
-            buy_hold_annual_return = (1 + buy_hold_return)**(annual_freq / test_days) - 1
-            sharpe = compute_sharpe_ratio(test_strategy_returns)
-
-            results.append({
-                "test_split": i,
-                "strategy_ann_return": strategy_annual_return,
-                "buy_hold_ann_return": buy_hold_annual_return,
-                "sharpe_ratio": sharpe
-            })
+    # 🎯 多線程畫圖
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [
+            executor.submit(save_cv_plot, row, n_states, cv_return_dir)
+            for row in results
+        ]
+        # 等待所有圖畫完
+        concurrent.futures.wait(futures)
 
 
-            print(f"✅ 測試集 {i}：夏普率 = {sharpe:.4f}, 策略年化報酬 = {strategy_annual_return:.4f}, 買進持有年化報酬 = {buy_hold_annual_return:.4f}")
 
-        except Exception as e:
-            print(f"⚠️ 發生錯誤 @ 測試集 {i}：{e}")
-            continue
+
 
     # 存結果
-    result_df = pd.DataFrame(results)
     result_path = os.path.join(result_dir, "crossval_summary.csv")
     result_df.to_csv(result_path, index=False)
 

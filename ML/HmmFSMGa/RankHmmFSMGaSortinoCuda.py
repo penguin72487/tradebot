@@ -33,7 +33,7 @@ def signed_log10_points(values):
     return logs, neg_mask  # 回傳 log 值與負數 mask
 
 from RankHmmFSMGaCuda import plot_strategy_curve
-# def plot_strategy_curve(df, n_states, save_dir, sharpe_ratio, buy_and_hold_return, best_weights):
+# def plot_strategy_curve(df, n_states, save_dir, sortino_ratio, buy_and_hold_return, best_weights):
 from RankHmmFSMGaCuda import plot_results
 # def plot_results(result_df, save_path):
 
@@ -68,6 +68,8 @@ from RankHmmFSMGaCuda import simulate_returns
 from RankHmmFSMGaCuda import compute_fitness
 # def compute_fitness(weights, states, returns):
 
+from RankHmmFSMGaCuda import compute_sortino_ratio
+
 from RankHmmFSMGaCuda import compute_sharpe_ratio
 # def compute_sharpe_ratio(daily_returns):
 
@@ -75,8 +77,10 @@ from RankHmmFSMGaCuda import compute_sharpe_ratio
 
 from RankHmmFSMGaCuda import evaluate_population
 # def evaluate_population(pop, states, returns):
+from RankHmmFSMGaCuda import evaluate_population_sortino
 from RankHmmFSMGaCuda import torch_ga_optimize
 # def torch_ga_optimize(states, returns, n_states=5, generations=50, population_size=1024):
+from RankHmmFSMGaCuda import torch_ga_optimize_sortino
 
 
 # ======== 6. 主程式入口 ========
@@ -96,22 +100,22 @@ def run_model():
 
     df = pd.read_csv(input_path)
     cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
-    df, features = preprocess(df, cols)
+    df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['close'].pct_change().fillna(0).values
 
     results = []
 
-    for n_states in range(79, 1001):
+    for n_states in range(2, 1001):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize(states, returns, n_states=n_states)
+            best_weights = torch_ga_optimize_sortino(states, returns, n_states=n_states)
             final_returns = simulate_returns(states, best_weights, returns)
 
             df['state'] = states
             df['strategy_return'] = final_returns
-            sharpe = compute_sharpe_ratio(final_returns)
+            sortino = compute_sortino_ratio(final_returns)
             cumulative_return = (1 + pd.Series(final_returns)).cumprod().iloc[-1]
             buy_and_hold_return = df['close'].iloc[-1] / df['close'].iloc[0] - 1
 
@@ -120,12 +124,12 @@ def run_model():
             os.makedirs(n_state_dir, exist_ok=True)
 
             # 存圖
-            plot_strategy_curve(df, n_states, n_state_dir, sharpe, buy_and_hold_return, best_weights)
+            plot_strategy_curve(df, n_states, n_state_dir, sortino, buy_and_hold_return, best_weights)
 
             # 存結果
             result = {
                 "n_states": n_states,
-                "sharpe_ratio": sharpe,
+                "sortino_ratio": sortino,
                 "cumulative_return": cumulative_return,
                 "buy_and_hold_return": buy_and_hold_return,
                 "weights": best_weights
@@ -134,7 +138,7 @@ def run_model():
             results.append(result)
             pd.DataFrame(results).to_csv(os.path.join(n_state_dir, "summary.csv"), index=False)
             pd.DataFrame(results).to_csv(output_path, index=False)
-            print(f" ✅ n_states = {n_states} 完成！ Sharpe = {sharpe:.4f}, 累計報酬 = {cumulative_return:.4f}, 買進持報酬 = {buy_and_hold_return:.4f}")
+            print(f" ✅ n_states = {n_states} 完成！ Sharpe = {sortino:.4f}, 累計報酬 = {cumulative_return:.4f}, 買進持報酬 = {buy_and_hold_return:.4f}")
 
             # 🧪 執行交叉測試，結果也存到對應資料夾下
             cross_val_model(df.copy(), n_states=n_states, result_dir=n_state_dir)
@@ -156,8 +160,8 @@ def cross_val_model(df, n_states=5, result_dir=None):
 
     # result_dir = os.path.join(result_dir, f"crossval_n{n_states}")
     # os.makedirs(result_dir, exist_ok=True)
-
-    df, features = preprocess(df)
+    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['close'].pct_change().fillna(0).values
     close_prices = df['close'].values
@@ -180,7 +184,7 @@ def cross_val_model(df, n_states=5, result_dir=None):
             hmm_model, train_states = train_hmm(X_train, n_states=n_states)
             test_states = hmm_model.predict(X_test)
 
-            best_weights = torch_ga_optimize(train_states, returns_train, n_states=n_states)
+            best_weights = torch_ga_optimize_sortino(train_states, returns_train, n_states=n_states)
             test_strategy_returns = best_weights[test_states] * returns_test
 
             # 計算年化報酬率
@@ -192,17 +196,17 @@ def cross_val_model(df, n_states=5, result_dir=None):
             # 計算 Buy & Hold 年化報酬率
             buy_hold_return = close_prices[test_idx[-1]] / close_prices[test_idx[0]] - 1
             buy_hold_annual_return = (1 + buy_hold_return)**(annual_freq / test_days) - 1
-            sharpe = compute_sharpe_ratio(test_strategy_returns)
+            sortino = compute_sortino_ratio(test_strategy_returns)
 
             results.append({
                 "test_split": i,
                 "strategy_ann_return": strategy_annual_return,
                 "buy_hold_ann_return": buy_hold_annual_return,
-                "sharpe_ratio": sharpe
+                "sortino_ratio": sortino
             })
 
 
-            print(f"✅ 測試集 {i}：夏普率 = {sharpe:.4f}, 策略年化報酬 = {strategy_annual_return:.4f}, 買進持有年化報酬 = {buy_hold_annual_return:.4f}")
+            print(f"✅ 測試集 {i}：夏普率 = {sortino:.4f}, 策略年化報酬 = {strategy_annual_return:.4f}, 買進持有年化報酬 = {buy_hold_annual_return:.4f}")
 
         except Exception as e:
             print(f"⚠️ 發生錯誤 @ 測試集 {i}：{e}")
@@ -245,7 +249,7 @@ def cross_val_model(df, n_states=5, result_dir=None):
 
         if not np.isnan(y_val):
             plt.text(row["test_split"], y_val + 0.05,  # 上移一點
-                     f"SR={row['sharpe_ratio']:.2f}",
+                     f"SR={row['sortino_ratio']:.2f}",
                      fontsize=8, ha='center', color='blue')
 
 

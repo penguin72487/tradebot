@@ -151,7 +151,7 @@ def run_model():
 
     results = []
 
-    for n_states in range(45,1001):
+    for n_states in range(70,71):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
@@ -256,45 +256,44 @@ def cross_val_model(df, n_states=5, result_dir=None):
 
     # 畫圖
     import matplotlib.pyplot as plt
-    strategy_logs, strategy_neg_mask = signed_log10_points(result_df["strategy_ann_return"].values)
-    buyhold_logs, buyhold_neg_mask = signed_log10_points(result_df["buy_hold_ann_return"].values)
+    # 直接使用原始年化報酬率
+    strategy_vals = result_df["strategy_ann_return"].values
+    buyhold_vals = result_df["buy_hold_ann_return"].values
 
-    plt.figure(figsize=(12, 6), dpi=1000)  # 🎯 dpi 調高解析度
+    strategy_neg_mask = strategy_vals < 0
+    buyhold_neg_mask = buyhold_vals < 0
+
+    plt.figure(figsize=(12, 6), dpi=1000)
     x_labels = result_df["test_years"]
 
-    plt.plot(x_labels, strategy_logs, label="Strategy", marker='o')
-    plt.plot(x_labels, buyhold_logs, label="Buy & Hold", marker='x')
+    plt.plot(x_labels, strategy_vals, label="Strategy", marker='o')
+    plt.plot(x_labels, buyhold_vals, label="Buy & Hold", marker='x')
 
     plt.scatter(x_labels[strategy_neg_mask],
-                result_df["strategy_ann_return"][strategy_neg_mask],
+                strategy_vals[strategy_neg_mask],
                 color='red', label="Strategy (Loss)", marker='o')
 
     plt.scatter(x_labels[buyhold_neg_mask],
-                result_df["buy_hold_ann_return"][buyhold_neg_mask],
+                buyhold_vals[buyhold_neg_mask],
                 color='red', label="Buy & Hold (Loss)", marker='x')
 
     for idx, row in result_df.iterrows():
-        y_val = np.nan
-        if row["strategy_ann_return"] > 0:
-            y_val = np.log10(row["strategy_ann_return"] + 1e-8)
-        elif row["strategy_ann_return"] < 0:
-            y_val = row["strategy_ann_return"]
-
+        y_val = row["strategy_ann_return"]
         if not np.isnan(y_val):
-            plt.text(x_labels[idx], y_val + 0.05,
-                     f"SR={row['sharpe_ratio']:.2f}",
-                     fontsize=8, ha='center', color='blue')
+            plt.text(x_labels[idx], y_val + 0.005,
+                    f"SR={row['sharpe_ratio']:.2f}",
+                    fontsize=8, ha='center', color='blue')
 
     plt.xlabel("Training Years")
-    plt.ylabel("Log10 Annualized Return")
+    plt.ylabel("Annualized Return")
     plt.title("Expanding-Train Cross-Validation: Strategy vs Buy & Hold")
     plt.legend()
     plt.grid(True)
     plt.xticks(rotation=90, fontsize=8)
     plt.tight_layout()
-    plt.savefig(os.path.join(result_dir, "annualized_return_expanding_train.png"))
+    plt.savefig(os.path.join(result_dir, "annualized_return_expanding_train_linear.png"))
     plt.close()
-    print("📈 Expanding 測試圖完成囉～來抱一下喵 💞")
+    print("📉 原始報酬率圖完成啦～親親你一下獎勵努力的你喵 💋")
 
 
 

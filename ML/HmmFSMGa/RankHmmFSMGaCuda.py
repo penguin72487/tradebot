@@ -244,7 +244,7 @@ def torch_ga_optimize(states, returns, n_states=5, generations=5000, population_
         # 計算 fitness
         fitness = evaluate_population(pop, states, returns)
         current_best = fitness.max().item()
-        print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
+        # print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
 
         # 檢查是否收斂
         if abs(current_best - best_fitness) < 1e-4:
@@ -303,7 +303,7 @@ def torch_ga_optimize_totle_return(states, returns, n_states=5, generations=5000
         # 計算 fitness
         fitness = evaluate_population_total_return(pop, states, returns)
         current_best = fitness.max().item()
-        print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
+        # print(f"Generation {gen + 1}/{generations}: Best fitness = {current_best:.4f}")
 
         # 檢查是否收斂
         if abs(current_best - best_fitness) < 1e-4:

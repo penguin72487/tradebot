@@ -156,10 +156,37 @@ def train_hmm(X, n_states=5):
     
     return best_model, best_model.predict(X)
 
+def export_hmm_model(model, save_path, tag=""):
+    """
+    將 GaussianHMM 模型參數輸出為一個 CSV 檔，欄位包含 state, hmm_means, hmm_covars（| 分隔）
+    """
+    os.makedirs(save_path, exist_ok=True)
+
+    data = []
+    for i in range(model.n_components):
+        # 確保 mean 與 covar 是 1D 向量（如果不是就攤平）
+        mean = np.ravel(model.means_[i])
+        covar = np.ravel(model.covars_[i])
+
+        mean_str = '|'.join([f"{v:.6f}" for v in mean])
+        covar_str = '|'.join([f"{v:.6f}" for v in covar])
+
+        data.append({'state': i, 'hmm_means': mean_str, 'hmm_covars': covar_str})
+
+    df = pd.DataFrame(data)
+    filename = f'hmm_parameters{tag}.csv'
+    df.to_csv(os.path.join(save_path, filename), index=False)
+    print(f"✅ 已儲存：{os.path.join(save_path, filename)} 喵～")
+
+
+
+
 # ======== 3. FSM 行為對應 & 回測績效計算 ========
-def simulate_returns(states, weights, returns):
+def simulate_returns(states, weights, next_returns):
     positions = np.array([weights[s] for s in states])
-    daily_returns = positions * returns
+    daily_returns = positions * next_returns  # 每日實際報酬
+    daily_returns = np.nan_to_num(daily_returns)  # 將 NaN 轉為 0
+    
     return daily_returns
 
 def compute_MaxDrawdown(returns):
@@ -194,9 +221,11 @@ def compute_sortino_ratio(returns):
 
 # ======== 4. 基因演算法 GA ========
 # @torch.compile
-def evaluate_population(pop, states, returns):
-    positions = pop[:, states]  # 每個個體對應到交易日倉位
-    daily_returns = positions * returns
+def evaluate_population(pop, states, next_returns):
+    positions = pop[:, states]  # 每個個體對應到交易日倉位.
+    daily_returns = positions * next_returns  # 每個個體的每日報酬
+    daily_returns = torch.nan_to_num(daily_returns)  # 將 NaN 轉為 0
+    
     mean = daily_returns.mean(dim=1)
     std = daily_returns.std(dim=1)
     sharpe = mean / (std + 1e-8)
@@ -423,13 +452,14 @@ def run_model():
     # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
     cols = ['MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
     df['returns'] = df['close'].pct_change().fillna(0)
-    # 👇 新增特徵：前一期報酬（延遲一根K線）
-    df['prev_return'] = df['returns'].shift(1).fillna(0)
-    cols.append('prev_return')  # 👉 加入到 feature list 裡
+    cols.append('returns')  # 👉 加入到 feature list 裡
+    # 👇 新增特徵：下一個報酬，計算回報用
+    df['next_returns'] = df['returns'].shift(-1).fillna(0)
 
     df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['returns'].values
+    next_returns = df['next_returns'].values
 
     results = []
 
@@ -437,8 +467,9 @@ def run_model():
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize_totle_return(states, returns, n_states=n_states)
-            final_returns = simulate_returns(states, best_weights, returns)
+            export_hmm_model(hmm_model, result_dir)
+            best_weights = torch_ga_optimize_totle_return(states, next_returns, n_states=n_states)
+            final_returns = simulate_returns(states, best_weights, next_returns)
 
             df['state'] = states
             df['strategy_return'] = final_returns

@@ -143,20 +143,27 @@ def run_model():
     output_path = os.path.join(result_dir, "hmm_fsm_ga_result_summary.csv")
 
     df = pd.read_csv(input_path)
-    
-    cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    cols = ['KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+    df['returns'] = df['close'].pct_change().fillna(0)
+    cols.append('returns')  # 👉 加入到 feature list 裡
+    # 👇 新增特徵：下一個報酬，當前預測的state座位下一根的position
+    df['next_returns'] = df['returns'].shift(-1).fillna(0)
+
+
     df, features = preprocess(df, features=cols)
     X = df[features].values
-    returns = df['close'].pct_change().fillna(0).values
+    returns = df['returns'].values
+    next_returns = df['next_returns'].values
 
     results = []
 
-    for n_states in range(70,71):
+    for n_states in range(2,16):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             hmm_model, states = train_hmm(X, n_states=n_states)
-            best_weights = torch_ga_optimize_totle_return(states, returns, n_states=n_states)
-            final_returns = simulate_returns(states, best_weights, returns)
+            best_weights = torch_ga_optimize_totle_return(states, next_returns, n_states=n_states)
+            final_returns = simulate_returns(states, best_weights, next_returns)
 
             df['state'] = states
             df['strategy_return'] = final_returns
@@ -204,15 +211,19 @@ def cross_val_model(df, n_states=5, result_dir=None):
         script_name = os.path.splitext(os.path.basename(__file__))[0]
         result_dir = os.path.join(base_dir, "result", f"{script_name}_crossval_expanding")
 
-    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
-    cols = ['MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
+    # cols = ['close', 'PMA12', 'PMA144', 'PMA169', 'PMA576', 'PMA676', 'MHULL', 'SHULL', 'KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2', 'volume', 'Bullish Volume Trend', 'Bearish Volume Trend']
+    cols = ['KD', 'J', 'RSI', 'MACD', 'Signal Line', 'Histogram', 'QQE Line', 'Histo2']
     df['returns'] = df['close'].pct_change().fillna(0)
-    # 👇 新增特徵：前一期報酬（延遲一根K線）
-    df['prev_return'] = df['returns'].shift(1).fillna(0)
-    cols.append('prev_return')  # 👉 加入到 feature list 裡
+    cols.append('returns')  # 👉 加入到 feature list 裡
+    # 👇 新增特徵：下一個報酬，當前預測的state座位下一根的position
+    df['next_returns'] = df['returns'].shift(-1).fillna(0)
+
+
     df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['returns'].values
+    next_returns = df['next_returns'].values
+
     close_prices = df['close'].values
 
     df['year'] = pd.to_datetime(df['time'], unit='s').dt.year
@@ -222,7 +233,7 @@ def cross_val_model(df, n_states=5, result_dir=None):
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
         futures = [
-            executor.submit(cross_val_worker, i, unique_years, df, X, returns, close_prices, n_states)
+            executor.submit(cross_val_worker, i, unique_years, df, X, next_returns, close_prices, n_states)
             for i in range(1, len(unique_years))
         ]
         results = [f.result() for f in concurrent.futures.as_completed(futures)]

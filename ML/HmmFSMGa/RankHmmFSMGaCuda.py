@@ -206,11 +206,14 @@ def compute_fitness(weights, states, returns):
     sharpe = mean_return / (std_return + 1e-8)
     return sharpe
 
-def compute_sharpe_ratio(returns):
-    mean_return = np.mean(returns)
-    std_return = np.std(returns)
-    sharpe = mean_return / (std_return + 1e-8)
-    return sharpe
+
+def compute_sharpe_ratio(returns, risk_free_rate=0.0, periods_per_year=2190):
+    excess_returns = returns - risk_free_rate
+    mean_excess = np.mean(excess_returns)
+    std_dev = np.std(returns)
+    sharpe_ratio = (mean_excess / (std_dev + 1e-8)) * np.sqrt(periods_per_year)
+    return sharpe_ratio
+
 
 def compute_sortino_ratio(returns):
     mean_return = np.mean(returns)

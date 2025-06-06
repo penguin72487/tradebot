@@ -168,10 +168,11 @@ def run_model():
     df, features = preprocess(df, features=cols)
     X = df[features].values
     returns = df['returns'].values
+    next_returns = df['next_returns'].values
 
     results = []
 
-    for n_states in range(2, 1001):
+    for n_states in range(2, 16):
         print(f"🚀 正在訓練 n_states = {n_states} ...")
         try:
             # === 🗂️ 建立專屬資料夾
@@ -180,8 +181,8 @@ def run_model():
             hmm_model, states = train_hmm(X, n_states=n_states)
             export_hmm_model(hmm_model, save_path=n_state_dir, tag=f"_n{n_states}")
 
-            best_weights = torch_ga_optimize_totle_return(states, returns, n_states=n_states)
-            final_returns = simulate_returns(states, best_weights, returns)
+            best_weights = torch_ga_optimize_totle_return(states, next_returns, n_states=n_states)
+            final_returns = simulate_returns(states, best_weights, next_returns)
 
             df['state'] = states
             df['strategy_return'] = final_returns

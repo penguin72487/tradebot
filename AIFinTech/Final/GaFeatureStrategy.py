@@ -15,7 +15,7 @@ df['year'] = df['year_month'].str[:4].astype(int)
 df['return'] = df['return'] / 100
 
 # 特徵欄位
-all_features = df.drop(columns=['stock_id', 'year_month', 'year', 'return', 'return_label']) \
+all_features = df.drop(columns=['stock_id', 'year_month', 'year']) \
                  .select_dtypes(include=[np.number]).columns.tolist()
 
 # 篩選完整年份
@@ -26,8 +26,8 @@ df = df[df['year'].isin(years)]
 def backtest_strategy(df, selected_features):
     strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [1, 10, 20, 30]}
     for i in range(len(years) - 1):
-        train_years = years[:i + 1]
-        test_year = years[i + 1]
+        train_years = years[:i+1]
+        test_year = years[i+1]
 
         train_df = df[df['year'].isin(train_years)]
         test_df = df[df['year'] == test_year]
@@ -63,7 +63,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 population_size = 64
-num_generations = 50
+num_generations = 100
 mutation_rate = 0.2
 num_features = len(all_features)
 
@@ -78,7 +78,7 @@ def evaluate_individual(individual):
         result = backtest_strategy(df, selected)
         best_cumret = max(
             (1 + pd.Series(result[n][k])).cumprod().iloc[-1]
-            for n in [1, 10, 20, 30]
+            for n in [10, 20, 30]
             for k in ['long', 'short', 'long_short']
         )
         return best_cumret, result
@@ -100,7 +100,7 @@ best_features = None
 best_strategies = None
 
 no_improvement_count = 0
-threshold = 5  # 停止條件：連續5代沒有改進
+threshold = 10  # 停止條件：連續5代沒有改進
 delta = 0.001  # 改進幅度太小也算沒改進
 
 for gen in range(num_generations):
@@ -145,34 +145,43 @@ for gen in range(num_generations):
     print(f"Generation {gen+1}: Best cumulative return = {best_score:.4f}")
 
 # 繪圖：所有策略的累積報酬圖
-def plot_strategies(strategies):
-    plt.figure(figsize=(14, 8))
+def plot_strategies(strategies, best_features):
+    plt.figure(figsize=(14, 10))  # 加大高度給空間
     best_label = ""
     best_cumret = -np.inf
 
-    markers = ['o', 's', 'D']
-    for i, n in enumerate([1, 10, 20, 30]):
+    markers = {"long": 'o', "short": 'X', "long_short": 's'}
+    line_styles = {"long": '-', "short": '--', "long_short": ':'}
+    for n in [1, 10, 20, 30]:
         for kind in ['long', 'short', 'long_short']:
             returns = pd.Series(strategies[n][kind])
             cumret = (1 + returns).cumprod()
-            label = f'{kind.capitalize()} Top {n}'
-            plt.plot(years[1:], cumret, label=label, marker=markers[i % len(markers)])
+            plt.plot(years[1:], cumret, label=f'{kind.capitalize()} Top {n}', marker=markers[kind], linestyle=line_styles[kind])
+
             if cumret.iloc[-1] > best_cumret:
                 best_cumret = cumret.iloc[-1]
-                best_label = label
+                best_label = f'{kind.capitalize()} Top {n}'
 
-
+    # 主標題
     plt.title(f'GA Feature Selection - Best Strategy: {best_label} ({best_cumret:.2f})')
+
+    # X、Y 軸標籤
     plt.xlabel('Year')
     plt.ylabel('Cumulative Return')
-    plt.yscale('log')  # 使用對數刻度更好地顯示累積報酬
+    plt.yscale('log')
     plt.legend()
     plt.grid(True)
-    plt.tight_layout()
+
+    # 額外空間 + 顯示 best_features（自動換行）
+    feature_text = 'Best Features:\n' + ', '.join(best_features)
+    plt.gcf().text(0.01, 0.01, feature_text, fontsize=10, va='bottom', ha='left', wrap=True)
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 調整 layout 留空間給下方文字
     plt.savefig(os.path.join(base_dir, 'best_strategy_cumulative_returns.png'))
     plt.show()
 
 # 輸出結果
 print("\n✅ 最佳累積報酬率：", round(best_score, 4))
 print("✅ 最佳特徵組合：", best_features)
-plot_strategies(best_strategies)
+plot_strategies(best_strategies, best_features)
+

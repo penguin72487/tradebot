@@ -5,6 +5,7 @@ import numpy as np
 
 # 使用相對路徑讀取 CSV
 file_path = os.path.join(os.path.dirname(__file__), 'top200_cleaned_noname.csv')
+base_dir = os.path.dirname(file_path)
 df = pd.read_csv(file_path)
 
 # 確保 year_month 是字串格式，且提取年份
@@ -14,7 +15,8 @@ df['return'] = df['return'] / 100
 years = df['year'].unique()
 years.sort()
 # 去掉最後一年
-years = years[:-1]  # 去掉最後一年，因為沒有後續數據來計算報酬率
+years = years[1:-1]  # 去掉前後一年，因為模擬的時候沒有前後續數據來計算報酬率
+
 
 # 找到每年的前後1, 10,20,30名的平均報酬
 
@@ -100,7 +102,7 @@ plt.xticks(years, rotation=45)
 plt.legend()
 plt.grid()
 plt.tight_layout()
-plt.savefig(file_path.replace('.csv', '_cumulative_returns.png'))
+plt.savefig(os.path.join(base_dir, 'upper_bound_cumulative_returns.png'))
 plt.show()
 
         

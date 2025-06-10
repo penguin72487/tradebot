@@ -17,9 +17,8 @@ df['year'] = df['year_month'].str[:4].astype(int)
 df['return'] = df['return'] / 100
 
 # feature engineering
-features = ['stock_id,year_month,market_cap_mil,closing_price_year,unknown_param,pb_ratio,ps_ratio,roe_m,roa,opm,npm,debt_to_equity,current_ratio_m,quick_ratio_m,inventory_turnover_m,ar_turnover_m,op_growth_m,net_income_growth_m,return,return_label']
-features = df.drop(columns=['stock_id', 'year_month', 'year', 'return', 'return_label']).select_dtypes(include=[np.number]).columns.tolist()
-
+features = df.drop(columns=['stock_id', 'year_month', 'year']) \
+                 .select_dtypes(include=[np.number]).columns.tolist()
 # Rank normalization Min-Max
 
 # 對數值型欄位做 Min-Max 壓縮（除了 return 與 rank_score）
@@ -90,8 +89,8 @@ for n in [10, 20, 30]:
 plt.title('XGBoost Ranking Strategy Cumulative Returns')
 plt.xlabel('Year')
 plt.ylabel('Cumulative Return')
-# plt.yscale('log')
-plt.yscale('linear')  # 使用線性刻度
+plt.yscale('log')
+# plt.yscale('linear')  # 使用線性刻度
 plt.legend()
 plt.grid(True)
 plt.tight_layout()

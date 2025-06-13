@@ -63,30 +63,30 @@ models = {
         C=1.0,
         epsilon=0.01
     ),
-    'KNN': KNeighborsRegressor(
-        n_neighbors=7,
-        weights='distance',
-        algorithm='auto',
-        leaf_size=20,
-        p=2,
-        metric='minkowski'
-    ),
-    'ExtraTrees': ExtraTreesRegressor(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=5,
-        min_samples_leaf=3,
-        max_features='sqrt',
-        bootstrap=True
-    ),
-    'BayesianRidge': BayesianRidge(
-        max_iter=300,
-        tol=1e-4
-    ),
-    'Linear': LinearRegression(
-        fit_intercept=True,
-        copy_X=True
-    ),
+    # 'KNN': KNeighborsRegressor(
+    #     n_neighbors=7,
+    #     weights='distance',
+    #     algorithm='auto',
+    #     leaf_size=20,
+    #     p=2,
+    #     metric='minkowski'
+    # ),
+    # 'ExtraTrees': ExtraTreesRegressor(
+    #     n_estimators=300,
+    #     max_depth=8,
+    #     min_samples_split=5,
+    #     min_samples_leaf=3,
+    #     max_features='sqrt',
+    #     bootstrap=True
+    # ),
+    # 'BayesianRidge': BayesianRidge(
+    #     max_iter=300,
+    #     tol=1e-4
+    # ),
+    # 'Linear': LinearRegression(
+    #     fit_intercept=True,
+    #     copy_X=True
+    # ),
     'RandomForest': RandomForestRegressor(
         n_estimators=300,
         max_depth=8,
@@ -138,7 +138,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['auto', 'sqrt', 'log2'],
+        'max_features': ['sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'HistGB': {
@@ -169,7 +169,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['auto', 'sqrt', 'log2'],
+        'max_features': ['sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'XGBoost': {

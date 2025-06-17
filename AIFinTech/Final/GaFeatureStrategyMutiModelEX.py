@@ -13,8 +13,9 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
 from sklearn.linear_model import BayesianRidge
 from sklearn.ensemble import ExtraTreesRegressor
-from sklearn.base import clone  # 加在最上面
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.base import clone  # 加在最上面
+
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 
@@ -36,12 +37,49 @@ df['current_return'] = df['return'].shift(1)  # 當前報酬率
 df['current_return_label'] = (df['current_return'] > 0).astype(int)  # 當前報酬率標籤
 
 # 特徵欄位
-all_features = df.drop(columns=['year_month', 'year','return','return_label']) \
-                 .select_dtypes(include=[np.number]).columns.tolist()
 
-from sklearn.preprocessing import StandardScaler
-scaler = StandardScaler()
-df[all_features] = scaler.fit_transform(df[all_features])
+# 原始數值欄位（排除非數值或標籤）
+base_features = df.drop(columns=['year_month', 'year', 'return', 'return_label']) \
+                  .select_dtypes(include=[np.number]).columns.tolist()
+
+from sklearn.preprocessing import (
+    StandardScaler, MinMaxScaler, MaxAbsScaler, RobustScaler,
+    Normalizer, PowerTransformer, QuantileTransformer
+)
+# 建立標準化版本
+scalers = {
+    'z': StandardScaler(),
+    'minmax': MinMaxScaler(),
+    'maxabs': MaxAbsScaler(),
+    'robust': RobustScaler(),
+    'l2norm': Normalizer(norm='l2'),
+    'power': PowerTransformer(method='yeo-johnson'),
+    'quantile': QuantileTransformer(output_distribution='normal', n_quantiles=100)
+}
+
+for name, scaler in scalers.items():
+    try:
+        scaled = scaler.fit_transform(df[base_features])
+        scaled_df = pd.DataFrame(scaled, columns=[f"{col}_{name}" for col in base_features])
+        df = pd.concat([df.reset_index(drop=True), scaled_df.reset_index(drop=True)], axis=1)
+    except Exception as e:
+        print(f"⚠️ {name} scaling failed: {e}")
+
+# # 加入變化率（差分比例變化）1~4階
+# # 加入變化率（自訂前一筆為 0 的行為）
+# for col in base_features:
+#     for k in range(1, 5):
+#         prev = df[col].shift(k)
+#         curr = df[col]
+#         # 如果 prev==0，讓它變成極小值以避免除以 0；或你可以自訂為 1.0
+#         safe_prev = prev.replace(0, np.nan)
+#         change = (curr - prev) / safe_prev
+#         df[f"{col}_chg{k}"] = change.fillna(0)  # 也可以用 .fillna(1.0)
+
+
+# 更新 all_features（選所有數值特徵，不含標籤）
+exclude = ['year_month', 'year', 'return', 'return_label']
+all_features = df.drop(columns=exclude).select_dtypes(include=[np.number]).columns.tolist()
 
 # 篩選完整年份
 years = sorted(df['year'].unique())[1:-1]
@@ -53,40 +91,47 @@ print(yearly_stock_counts)
 
 # 模型集合
 models = {
-    # 'Ridge': Ridge(
-    #     alpha=10.0,
-    #     fit_intercept=True,
-    #     solver='auto'
-    # ),
+    'Ridge': Ridge(
+        alpha=10.0,
+        fit_intercept=True,
+        solver='auto'
+    ),
     'SVR': SVR(
         kernel='rbf',
         C=1.0,
         epsilon=0.01
     ),
-    # 'KNN': KNeighborsRegressor(
-    #     n_neighbors=7,
-    #     weights='distance',
-    #     algorithm='auto',
-    #     leaf_size=20,
-    #     p=2,
-    #     metric='minkowski'
-    # ),
-    # 'ExtraTrees': ExtraTreesRegressor(
-    #     n_estimators=300,
-    #     max_depth=8,
-    #     min_samples_split=5,
-    #     min_samples_leaf=3,
-    #     max_features='sqrt',
-    #     bootstrap=True
-    # ),
-    # 'BayesianRidge': BayesianRidge(
-    #     max_iter=300,
-    #     tol=1e-4
-    # ),
-    # 'Linear': LinearRegression(
-    #     fit_intercept=True,
-    #     copy_X=True
-    # ),
+    'KNN': KNeighborsRegressor(
+        n_neighbors=7,
+        weights='distance',
+        algorithm='auto',
+        leaf_size=20,
+        p=2,
+        metric='minkowski'
+    ),
+    'ExtraTrees': ExtraTreesRegressor(
+        n_estimators=300,
+        max_depth=8,
+        min_samples_split=5,
+        min_samples_leaf=3,
+        max_features='sqrt',
+        bootstrap=True
+    ),
+    'HistGB' : HistGradientBoostingRegressor(
+        max_iter=300,
+        learning_rate=0.05,
+        max_depth=6,
+        l2_regularization=0.1,
+        early_stopping=True
+    ),
+    'BayesianRidge': BayesianRidge(
+        max_iter=300,
+        tol=1e-4
+    ),
+    'Linear': LinearRegression(
+        fit_intercept=True,
+        copy_X=True
+    ),
     'RandomForest': RandomForestRegressor(
         n_estimators=300,
         max_depth=8,
@@ -138,7 +183,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['sqrt', 'log2'],
+        'max_features': ['auto', 'sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'HistGB': {
@@ -169,7 +214,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['sqrt', 'log2'],
+        'max_features': ['auto', 'sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'XGBoost': {
@@ -196,13 +241,40 @@ param_spaces = {
     }
 }
 
+def init_models_by_name (model_name, params):
+    """
+    根據模型名稱和參數初始化模型。
+    """
+    if model_name == 'XGBoost':
+        model = xgb.XGBRegressor(**params)
+    elif model_name == 'CatBoost':
+        model = cb.CatBoostRegressor(verbose=0, **params)
+    elif model_name == 'SVR':
+        model = SVR(**params)
+    elif model_name == 'Ridge':
+        model = Ridge(**params)
+    elif model_name == 'BayesianRidge':
+        model = BayesianRidge(**params)
+    elif model_name == 'Linear':
+        model = LinearRegression(**params)
+    elif model_name == 'KNN':
+        model = KNeighborsRegressor(**params)
+    elif model_name == 'ExtraTrees':
+        model = ExtraTreesRegressor(**params)
+    elif model_name == 'RandomForest':
+        model = RandomForestRegressor(**params)
+    elif model_name == 'HistGB':
+        model = HistGradientBoostingRegressor(**params)
+    else:
+        raise ValueError(f"未知模型：{model_name}")
+    return model
+
 
 
 # 回測策略：回傳不同 TopN 組合的策略報酬序列
-def backtest_strategy(df, selected_features, model):
-    strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [1, 10, 20, 30, 200]}
-    top30_records = []
+def backtest_strategy(df, selected_features,model):
 
+    strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [10, 20, 30, 200]}
     for i in range(len(years) - 1):
         train_years = years[:i + 1]
         test_year = years[i + 1]
@@ -215,24 +287,14 @@ def backtest_strategy(df, selected_features, model):
         X_test = test_df[selected_features]
         y_test = test_df['return']
 
-        model_clone = clone(model)
+        model_clone = clone(model)  # 每次都要 clone，避免被 overwrite
         model_clone.fit(X_train, y_train)
 
         test_df = test_df.copy()
         test_df['predicted_return'] = model_clone.predict(X_test)
         test_df['true_return'] = y_test
 
-        # ⬇️ 存每年 Top 30 股票預測 vs 實際 return
-        top30 = test_df.nlargest(30, 'predicted_return')
-        for _, row in top30.iterrows():
-            top30_records.append({
-                'year': test_year,
-                'stock_id': row['stock_id'],
-                'predicted_return': row['predicted_return'],
-                'true_return': row['true_return']
-            })
-
-        for n in [1, 10, 20, 30, 200]:
+        for n in [10, 20, 30, 200]:
             top_n = test_df.nlargest(n, 'predicted_return')
             bottom_n = test_df.nsmallest(n, 'predicted_return')
 
@@ -244,12 +306,9 @@ def backtest_strategy(df, selected_features, model):
             strategy_returns[n]['short'].append(short_return)
             strategy_returns[n]['long_short'].append(long_short)
 
-    # 👉 將 top 30 預測結果轉成 DataFrame 回傳
-    top30_predictions_df = pd.DataFrame(top30_records)
-    return strategy_returns, top30_predictions_df
+    return strategy_returns
 
-
-def plot_strategies(strategies, best_features, best_parameters, top30_df, model_name='ridge'):
+def plot_strategies(strategies, best_features, best_parameters, model_name='ridge'):
     plt.figure(figsize=(14, 11))
     best_label = ""
     best_cumret = -np.inf
@@ -259,7 +318,7 @@ def plot_strategies(strategies, best_features, best_parameters, top30_df, model_
     color_map = {'1': 'blue', '10': 'orange', '20': 'green', '30': 'red', '200': 'purple'}
     results_df = pd.DataFrame({'Year': years[1:]})  
 
-    for n in [1, 10, 20, 30, 200]:
+    for n in [10, 20, 30, 200]:
         for kind in ['long', 'short', 'long_short']:
             returns = pd.Series(strategies[n][kind])
             cumret = (1 + returns).cumprod()
@@ -298,21 +357,20 @@ def plot_strategies(strategies, best_features, best_parameters, top30_df, model_
 
     csv_path = os.path.join(result_dir, f'{model_name}_cumulative_returns.csv')
     results_df.to_csv(csv_path, index=False)
-    top30_df.to_csv(os.path.join(result_dir, f"{model_name}_top30_predictions.csv"), index=False, encoding='utf-8-sig')
 
 
 
+def backtest_cross_validation(df, selected_features, best_prameters, model_name='ridge'):
+    results = []    
 
-
-def backtest_cross_validation(df, selected_features, model):
-    results = []
+    model = init_models_by_name(model_name, best_prameters)
 
     for i in range(len(years) - 1):
         train_years = years[:i + 1]
         test_years = years[i + 1:]
 
         train_df = df[df['year'].isin(train_years)]
-        strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [1, 10, 20, 30, 200]}
+        strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [10, 20, 30, 200]}
 
         for test_year in test_years:
             test_df = df[df['year'] == test_year]
@@ -331,7 +389,7 @@ def backtest_cross_validation(df, selected_features, model):
             test_df['predicted_return'] = model_clone.predict(X_test)
             test_df['true_return'] = y_test
 
-            for n in [1, 10, 20, 30, 200]:
+            for n in [10, 20, 30, 200]:
                 top_n = test_df.nlargest(n, 'predicted_return')
                 bottom_n = test_df.nsmallest(n, 'predicted_return')
 
@@ -354,7 +412,7 @@ def backtest_cross_validation(df, selected_features, model):
 
         test_year_range = test_years[-1] - test_years[0] + 1
 
-        for n in [1, 10, 20, 30, 200]:
+        for n in [10, 20, 30, 200]:
             for strategy_name in ['long', 'short', 'long_short']:
                 series = pd.Series(strategy_returns[n][strategy_name])
                 if series.empty:
@@ -391,7 +449,7 @@ def plot_crossval_results(result_df, base_dir='.', model_name='Model'):
     line_styles = {"long": '-', "short": '--', "long_short": ':'}
     color_map = {'1': 'blue', '10': 'orange', '20': 'green', '30': 'red', '200': 'purple'}
     plt.figure(figsize=(14, 10))
-    for n in [1, 10, 20, 30, 200]:
+    for n in [10, 20, 30, 200]:
         for strategy in ['long', 'short', 'long_short']:
             col_name = f'Top{n}_{strategy}_Annual'
             if col_name in result_df.columns:
@@ -424,9 +482,9 @@ def plot_crossval_results(result_df, base_dir='.', model_name='Model'):
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-population_size = 64
-num_generations = 100
-mutation_rate = 0.2
+population_size = 1024
+num_generations = 1000
+
 num_features = len(all_features)
 
 # population = np.random.randint(0, 2, size=(population_size, num_features))
@@ -467,18 +525,18 @@ def evaluate_individual(individual, model_name):
             raise ValueError(f"未知模型：{model_name}")
 
         # 執行策略回測
-        result, top30_df = backtest_strategy(df, selected, model)
+        result = backtest_strategy(df, selected, model)
         best_cumret = max(
             (1 + pd.Series(result[n][k])).cumprod().iloc[-1]
             for n in [10, 20, 30]
             for k in ['long', 'short', 'long_short']
         )
 
-        return best_cumret, result, selected, params,top30_df
+        return best_cumret, result, selected, params
 
     except Exception as e:
         print(f"❌ Error in {model_name}: {str(e)}")
-        return 0, None, None, None
+        return 0, None, None, None, None  # 評估失敗則返回 0 分數
 
 
 # 用多核心平行跑一整群個體
@@ -487,8 +545,8 @@ def evaluate_population(population, model_name):
         delayed(evaluate_individual)(ind, model_name)
         for ind in tqdm(population, desc=f"Evaluating {model_name}")
     )
-    fitness, strategy_history, selected_features_list, param_list, top30_df_list = zip(*results)
-    return np.array(fitness), list(strategy_history), list(selected_features_list), list(param_list), list(top30_df_list)
+    fitness, strategy_history, selected_features_list, param_list = zip(*results)
+    return np.array(fitness), list(strategy_history), list(selected_features_list), list(param_list)
 
 
 def decode_params(param_space, gene_vector):
@@ -519,9 +577,10 @@ for model_name, model in models.items():
     best_strategies = None
 
     no_improvement_count = 0
-    threshold = 10  # 停止條件：連續5代沒有改進
+    threshold = 20  # 停止條件：連續5代沒有改進
     delta = 0.001  # 改進幅度太小也算沒改進
-
+    init_mutation_rate = 0.2
+    
     num_params = len(param_spaces[model_name])  # 超參數個數
     population = np.random.rand(population_size, num_features + num_params)
     # 前半段 0/1，後半段 0.0~1.0（需 decode 後套入超參數）
@@ -531,7 +590,7 @@ for model_name, model in models.items():
 
 
     for gen in range(num_generations):
-        fitness, all_strategies, selected_features_list, param_list , top30_df_list = evaluate_population(population, model_name)
+        fitness, all_strategies, selected_features_list, param_list = evaluate_population(population, model_name)
 
 
         if np.max(fitness) - best_score <= delta:
@@ -550,8 +609,12 @@ for model_name, model in models.items():
             best_strategies = all_strategies[best_idx]
 
         # 選擇（Roulette wheel）
-        prob = fitness / fitness.sum() if fitness.sum() > 0 else np.ones(population_size) / population_size
-        selected = population[np.random.choice(population_size, size=population_size, p=prob)]
+        # 確保 prob 是正確的機率分布
+        prob = fitness / fitness.sum()  # 或其他 normalize 的方式
+        population = np.array(population)  # 加這行，保證是 ndarray
+        indices = np.random.choice(population_size, size=population_size, replace=True, p=prob)
+        selected = population[indices]
+
 
         # 交配（single-point crossover）
         next_gen = []
@@ -563,18 +626,31 @@ for model_name, model in models.items():
             c2 = np.concatenate([p2[:cp], p1[cp:]])
             next_gen.extend([c1, c2])
 
-        # 突變（bit flip）
-        next_gen = np.array(next_gen)
+        # 動態突變率調整
+        if no_improvement_count >= 5:
+            mutation_rate = init_mutation_rate + ((1-init_mutation_rate) * (1 - no_improvement_count / threshold))
+        else:
+            mutation_rate = init_mutation_rate
+
+        # # 突變（bit flip）
+        # next_gen = np.array(next_gen)
+        # for i in range(population_size):
+        #     if np.random.rand() < mutation_rate:
+        #         mp = np.random.randint(num_features)
+        #         next_gen[i][mp] = 1 - next_gen[i][mp]
+
+        # 多點突變（讓突變率平均分配到每個基因位點）
         for i in range(population_size):
-            if np.random.rand() < mutation_rate:
-                mp = np.random.randint(num_features)
-                next_gen[i][mp] = 1 - next_gen[i][mp]
+            for j in range(num_features):
+                if np.random.rand() < (mutation_rate / num_features):
+                    next_gen[i][j] = 1 - next_gen[i][j]
+
 
         population = next_gen
-        print(f"Generation {gen+1}: Best cumulative return = {best_score:.4f}")
+        print(f"{model_name}Generation {gen+1}: Best cumulative return = {best_score:.4f}")
         print(f"Best features: {best_features}")
         print(f"Best parameters: {best_params}")
-        cv_result = backtest_cross_validation(df, best_features, model)
+        cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
 
 
 
@@ -587,16 +663,7 @@ for model_name, model in models.items():
     # plot_strategies(best_strategies, all_features, model_name+ ' (All Features)')
     # plot_crossval_results(cv_result, result_dir, model_name + ' (All Features)')
     # 挑特徵畫圖
-    top30_df = top30_df_list[-1]  # 保留最後一筆 DataFrame
-    top30_df.to_csv(
-        os.path.join(result_dir, f"{model_name}_top30_predictions.csv"),
-        index=False,
-        encoding='utf-8-sig'
-    )
-
-
-
-    plot_strategies(best_strategies, best_features, best_params, top30_df, model_name)
+    plot_strategies(best_strategies, best_features, best_params, model_name)
     # 儲存交叉驗證結果
     plot_crossval_results(cv_result, result_dir, model_name)
     # 儲存最佳策略

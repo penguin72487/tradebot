@@ -25,11 +25,19 @@ file_path = os.path.join(os.path.dirname(__file__), 'final_features.csv')
 base_dir = os.path.dirname(file_path)
 result_dir = os.path.join(base_dir, 'results_Ex')
 os.makedirs(result_dir, exist_ok=True)  # 確保資料夾存在
+df = pd.read_csv(file_path, dtype={'year_month': str})
 
-df = pd.read_csv(file_path)
 
-# 預處理
 df['year_month'] = df['year_month'].astype(str)
+
+# 看看 year_month 欄位中不是 6 碼數字的有哪些
+invalid = df[~df['year_month'].astype(str).str.match(r'^\d{6}$')]
+
+if not invalid.empty:
+    print("⚠️ 發現以下 year_month 欄位格式異常的資料：")
+    print(invalid[['stock_id', 'year_month']].head(10))  # 先印前10筆
+else:
+    print("✅ 所有 year_month 格式正常喵～")
 df['year'] = df['year_month'].str[:4].astype(int)
 df['return'] = df['return'] / 100
 
@@ -42,6 +50,30 @@ df['current_return_label'] = (df['current_return'] > 0).astype(int)  # 當前報
 base_features = df.drop(columns=['year_month', 'year', 'return', 'return_label']) \
                   .select_dtypes(include=[np.number]).columns.tolist()
 
+# 加入變化率（差分比例變化）1~4階
+# 加入變化率（自訂前一筆為 0 的行為）
+chg_features = {}
+
+for col in base_features:
+    for k in range(1, 7):
+        prev = df[col].shift(k)
+        safe_prev = prev.replace(0, np.nan)
+        change = (df[col] - prev) / safe_prev
+        chg_features[f"{col}_chg{k}"] = change.fillna(0)
+
+# 一次性加入所有新欄位，避免 fragmentation
+chg_df = pd.DataFrame(chg_features)
+df = pd.concat([df.reset_index(drop=True), chg_df.reset_index(drop=True)], axis=1)
+
+# 如果你後面要繼續處理 df，也可以去除 fragmentation
+df = df.copy()  # 去除 internal block fragmentation
+
+
+
+changed_features = df.drop(columns=['year_month', 'year', 'return', 'return_label']) \
+                  .select_dtypes(include=[np.number]).columns.tolist()
+
+
 from sklearn.preprocessing import (
     StandardScaler, MinMaxScaler, MaxAbsScaler, RobustScaler,
     Normalizer, PowerTransformer, QuantileTransformer
@@ -52,36 +84,55 @@ scalers = {
     'minmax': MinMaxScaler(),
     'maxabs': MaxAbsScaler(),
     'robust': RobustScaler(),
-    'l2norm': Normalizer(norm='l2'),
+    # 'l2norm': Normalizer(norm='l2'),
     'power': PowerTransformer(method='yeo-johnson'),
     'quantile': QuantileTransformer(output_distribution='normal', n_quantiles=100)
 }
+df = df.sort_values(by='year').reset_index(drop=True)
 
-for name, scaler in scalers.items():
-    try:
-        scaled = scaler.fit_transform(df[base_features])
-        scaled_df = pd.DataFrame(scaled, columns=[f"{col}_{name}" for col in base_features])
-        df = pd.concat([df.reset_index(drop=True), scaled_df.reset_index(drop=True)], axis=1)
-    except Exception as e:
-        print(f"⚠️ {name} scaling failed: {e}")
+# 只保留有 year 欄位的 row
+years = sorted(df['year'].unique())
 
-# # 加入變化率（差分比例變化）1~4階
-# # 加入變化率（自訂前一筆為 0 的行為）
-# for col in base_features:
-#     for k in range(1, 5):
-#         prev = df[col].shift(k)
-#         curr = df[col]
-#         # 如果 prev==0，讓它變成極小值以避免除以 0；或你可以自訂為 1.0
-#         safe_prev = prev.replace(0, np.nan)
-#         change = (curr - prev) / safe_prev
-#         df[f"{col}_chg{k}"] = change.fillna(0)  # 也可以用 .fillna(1.0)
+# 建立每一種 scaler 的滾動標準化結果
+for name, scaler_obj in scalers.items():
+    print(f"🔧 正在處理標準化方式：{name} ...")
+    transformed_list = []
+    
+    for current_year in years:
+        # 取得當前年以前的資料當作 fit 的 base
+        fit_data = df[df['year'] <= current_year][changed_features]
 
+        try:
+            scaler = clone(scaler_obj)
+            scaler.fit(fit_data)
+
+            # transform 當年當下的資料
+            current_data = df[df['year'] == current_year][changed_features]
+            transformed = scaler.transform(current_data)
+
+            transformed_df = pd.DataFrame(
+                transformed,
+                columns=[f"{col}_{name}" for col in changed_features],
+                index=current_data.index
+            )
+            transformed_list.append(transformed_df)
+
+        except Exception as e:
+            print(f"⚠️ {name} 在 year={current_year} 標準化失敗：{e}")
+            continue
+
+    # 合併所有年度的標準化結果
+    all_transformed = pd.concat(transformed_list).sort_index()
+    df = pd.concat([df, all_transformed], axis=1)
+
+print("✅ 滾動式標準化完成囉～避免未來資訊喵♡")
 
 # 更新 all_features（選所有數值特徵，不含標籤）
 exclude = ['year_month', 'year', 'return', 'return_label']
 all_features = df.drop(columns=exclude).select_dtypes(include=[np.number]).columns.tolist()
 
 # 篩選完整年份
+df_2024 = df[df['year'] == 2024] 
 years = sorted(df['year'].unique())[1:-1]
 df = df[df['year'].isin(years)]
 # 每年股票數量統計
@@ -91,90 +142,90 @@ print(yearly_stock_counts)
 
 # 模型集合
 models = {
-    'Ridge': Ridge(
-        alpha=10.0,
-        fit_intercept=True,
-        solver='auto'
-    ),
-    'SVR': SVR(
-        kernel='rbf',
-        C=1.0,
-        epsilon=0.01
-    ),
-    'KNN': KNeighborsRegressor(
-        n_neighbors=7,
-        weights='distance',
-        algorithm='auto',
-        leaf_size=20,
-        p=2,
-        metric='minkowski'
-    ),
-    'ExtraTrees': ExtraTreesRegressor(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=5,
-        min_samples_leaf=3,
-        max_features='sqrt',
-        bootstrap=True
-    ),
-    'HistGB' : HistGradientBoostingRegressor(
-        max_iter=300,
-        learning_rate=0.05,
-        max_depth=6,
-        l2_regularization=0.1,
-        early_stopping=True
-    ),
+    # 'Ridge': Ridge(
+    #     alpha=10.0,
+    #     fit_intercept=True,
+    #     solver='auto'
+    # ),
+    # 'KNN': KNeighborsRegressor(
+    #     n_neighbors=7,
+    #     weights='distance',
+    #     algorithm='auto',
+    #     leaf_size=20,
+    #     p=2,
+    #     metric='minkowski'
+    # ),
+    # 'ExtraTrees': ExtraTreesRegressor(
+    #     n_estimators=300,
+    #     max_depth=8,
+    #     min_samples_split=5,
+    #     min_samples_leaf=3,
+    #     max_features='sqrt',
+    #     bootstrap=True
+    # ),
+    # 'HistGB' : HistGradientBoostingRegressor(
+    #     max_iter=300,
+    #     learning_rate=0.05,
+    #     max_depth=6,
+    #     l2_regularization=0.1,
+    #     early_stopping=True
+    # ),
     'BayesianRidge': BayesianRidge(
         max_iter=300,
         tol=1e-4
     ),
-    'Linear': LinearRegression(
-        fit_intercept=True,
-        copy_X=True
-    ),
-    'RandomForest': RandomForestRegressor(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=5,
-        min_samples_leaf=3,
-        max_features='sqrt',
-        bootstrap=True
-    ),
-    'XGBoost': xgb.XGBRegressor(
-        objective='reg:squarederror', 
-        max_depth=4, 
-        eta=0.1, 
-        n_estimators=300
-    ),
-    'CatBoost': cb.CatBoostRegressor(
-        iterations=500,
-        learning_rate=0.03,
-        depth=6,
-        l2_leaf_reg=3,
-        loss_function='RMSE',
-        verbose=0
-    )
+    # 'Linear': LinearRegression(
+    #     fit_intercept=True,
+    #     copy_X=True
+    # ),
+    # 'RandomForest': RandomForestRegressor(
+    #     n_estimators=300,
+    #     max_depth=8,
+    #     min_samples_split=5,
+    #     min_samples_leaf=3,
+    #     max_features='sqrt',
+    #     bootstrap=True
+    # ),
+    # 'SVR': SVR(
+    #     kernel='rbf',
+    #     C=1.0,
+    #     epsilon=0.01
+    # ),
+    # 'XGBoost': xgb.XGBRegressor(
+    #     objective='reg:squarederror',
+    #     max_depth=4, 
+    #     eta=0.1, 
+    #     n_estimators=300
+    # ),
+    # 'CatBoost': cb.CatBoostRegressor(
+    #     iterations=500,
+    #     learning_rate=0.03,
+    #     depth=6,
+    #     l2_leaf_reg=3,
+    #     loss_function='RMSE',
+    #     verbose=0
+    # )
 }
 
 param_spaces = {
     'Ridge': {
         'alpha': (1e-3, 1e8),  # 正則化參數
         'fit_intercept': [True, False],
-        'solver': ['auto', 'svd', 'cholesky', 'lsqr'],
-        'max_iter': (100, 10000),  # 最大迭代次數
+        'solver': ['auto', 'svd', 'cholesky', 'lsqr','sparse_cg', 'sag', 'saga'],
+        'max_iter': (100, 1e8),  # 最大迭代次數
     },
     'SVR': {
-        'C': (0.1, 1000.0),              # 正則化參數
+        'C': (1e-3, 1e6),              # 正則化參數
         'epsilon': (0.001, 1.0),        # 容許誤差
         'kernel': ['rbf'],
         'gamma': ['scale', 'auto'],     # 核函數係數
         'shrinking': [True, False]
     },
     'KNN': {
-        'n_neighbors': (1, 30),
+        'n_neighbors': (1, 200),
         'weights': ['uniform', 'distance'],
         'algorithm': ['auto', 'ball_tree', 'kd_tree', 'brute'],
-        'leaf_size': (10, 100),
+        'leaf_size': (10, 1e8),
         'p': (1, 2),  # 曼哈頓 or 歐式距離
         'metric': ['minkowski']
     },
@@ -183,7 +234,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['auto', 'sqrt', 'log2'],
+        'max_features': ['sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'HistGB': {
@@ -195,14 +246,15 @@ param_spaces = {
         'early_stopping': [True, False]
     },
     'BayesianRidge': {
-        'max_iter': (100, 500),
-        'tol': (1e-6, 1e-2),
-        'alpha_1': (1e-7, 1e-3),
-        'alpha_2': (1e-7, 1e-3),
-        'lambda_1': (1e-7, 1e-3),
-        'lambda_2': (1e-7, 1e-3),
+        'max_iter': (100, 3000),
+        'tol': (1e-6, 1),
+        'alpha_1': (1e-7, 1e8),
+        'alpha_2': (1e-7, 1e8),
+        'lambda_1': (1e-7, 1e8),
+        'lambda_2': (1e-7, 1e8),
         'fit_intercept': [True, False],
-        'compute_score': [True, False]
+        'compute_score': [True, False],
+        'copy_X': [True, False],
     },
     'Linear': {
         'fit_intercept': [True, False],
@@ -214,7 +266,7 @@ param_spaces = {
         'max_depth': (2, 30),
         'min_samples_split': (2, 20),
         'min_samples_leaf': (1, 10),
-        'max_features': ['auto', 'sqrt', 'log2'],
+        'max_features': ['sqrt', 'log2'],
         'bootstrap': [True, False]
     },
     'XGBoost': {
@@ -393,6 +445,11 @@ def backtest_cross_validation(df, selected_features, best_prameters, model_name=
                 top_n = test_df.nlargest(n, 'predicted_return')
                 bottom_n = test_df.nsmallest(n, 'predicted_return')
 
+   
+                
+                    
+                    
+
                 long_return = top_n['true_return'].mean()
                 short_return = -bottom_n['true_return'].mean()
                 long_short = (long_return + short_return) / 2
@@ -482,7 +539,7 @@ def plot_crossval_results(result_df, base_dir='.', model_name='Model'):
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-population_size = 1024
+population_size =1024
 num_generations = 1000
 
 num_features = len(all_features)
@@ -501,28 +558,7 @@ def evaluate_individual(individual, model_name):
         params = decode_params(param_spaces[model_name], individual[-num_params:])
 
         # 動態建模
-        if model_name == 'XGBoost':
-            model = xgb.XGBRegressor(**params)
-        elif model_name == 'CatBoost':
-            model = cb.CatBoostRegressor(verbose=0, **params)
-        elif model_name == 'SVR':
-            model = SVR(**params)
-        elif model_name == 'Ridge':
-            model = Ridge(**params)
-        elif model_name == 'BayesianRidge':
-            model = BayesianRidge(**params)
-        elif model_name == 'Linear':
-            model = LinearRegression(**params)
-        elif model_name == 'KNN':
-            model = KNeighborsRegressor(**params)
-        elif model_name == 'ExtraTrees':
-            model = ExtraTreesRegressor(**params)
-        elif model_name == 'RandomForest':
-            model = RandomForestRegressor(**params)
-        elif model_name == 'HistGB':
-            model = HistGradientBoostingRegressor(**params)
-        else:
-            raise ValueError(f"未知模型：{model_name}")
+        model = init_models_by_name(model_name, params)
 
         # 執行策略回測
         result = backtest_strategy(df, selected, model)
@@ -540,12 +576,27 @@ def evaluate_individual(individual, model_name):
 
 
 # 用多核心平行跑一整群個體
+def safe_evaluate(ind, model_name):
+    try:
+        return evaluate_individual(ind, model_name)
+    except Exception as e:
+        print(f"❌ 個體評估失敗：model={model_name}, ind={ind}, error={e}")
+        # 回傳預設值：fitness -inf、空策略、空特徵、空參數（你也可以自訂）
+        return -np.inf, None, None, None
+
 def evaluate_population(population, model_name):
-    results = Parallel(n_jobs=-1)(
-        delayed(evaluate_individual)(ind, model_name)
+    results = Parallel(n_jobs=-1)(  # 建議先限制平行數量，例如4
+        delayed(safe_evaluate)(ind, model_name)
         for ind in tqdm(population, desc=f"Evaluating {model_name}")
     )
-    fitness, strategy_history, selected_features_list, param_list = zip(*results)
+
+    # 過濾掉錯誤的結果（你也可以選擇保留再後續處理）
+    valid_results = [r for r in results if r[1] is not None]
+
+    if not valid_results:
+        raise RuntimeError("😭 所有個體評估都失敗喵... 沒有有效結果")
+
+    fitness, strategy_history, selected_features_list, param_list = zip(*valid_results)
     return np.array(fitness), list(strategy_history), list(selected_features_list), list(param_list)
 
 
@@ -563,60 +614,86 @@ def decode_params(param_space, gene_vector):
     return decoded
 
 
+import pickle
 
+def save_checkpoint(filename, data):
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
 
-
+def load_checkpoint(filename):
+    with open(filename, 'rb') as f:
+        return pickle.load(f)
 
 for model_name, model in models.items():
     print(f"Training model: {model_name}")
-    results = []
+    checkpoint_path = os.path.join(result_dir, f"{model_name}_checkpoint.pkl")
     cv_result = pd.DataFrame()
-    # GA 主流程
-    best_score = -np.inf
-    best_features = None
-    best_strategies = None
 
-    no_improvement_count = 0
-    threshold = 20  # 停止條件：連續5代沒有改進
-    delta = 0.001  # 改進幅度太小也算沒改進
+    num_params = len(param_spaces[model_name])
+    start_generation = 0
+    init_density = 0.05
+
+    if os.path.exists(checkpoint_path):
+        
+        checkpoint = load_checkpoint(checkpoint_path)
+        population = checkpoint['population']
+        best_score = checkpoint['best_score']
+        best_features = checkpoint['best_features']
+        best_params = checkpoint['best_params']
+        best_strategies = checkpoint['best_strategies']
+        no_improvement_count = checkpoint['no_improvement_count']
+        start_generation = checkpoint['generation']
+        print(f"🔄 從 checkpoint 恢復: {checkpoint_path} generation: {checkpoint['generation']}")
+    else:
+        print(f"🆕 開始新的訓練: {model_name}")
+        population = np.random.rand(population_size, num_features + num_params)
+        population[:, :num_features] = (population[:, :num_features] < init_density).astype(int)
+        best_score = -np.inf
+        best_features = None
+        best_strategies = None
+        best_params = None
+        no_improvement_count = 0
+
+    threshold = 300
+    delta = 0.001
     init_mutation_rate = 0.2
-    
-    num_params = len(param_spaces[model_name])  # 超參數個數
-    population = np.random.rand(population_size, num_features + num_params)
-    # 前半段 0/1，後半段 0.0~1.0（需 decode 後套入超參數）
-    population[:, :num_features] = (population[:, :num_features] > 0.5).astype(int)
 
-
-
-
-    for gen in range(num_generations):
+    for gen in range(start_generation, num_generations):
+        if no_improvement_count >= threshold:
+            print(f"Stopping early at generation {gen+1} due to no improvement.")
+            break
         fitness, all_strategies, selected_features_list, param_list = evaluate_population(population, model_name)
-
 
         if np.max(fitness) - best_score <= delta:
             no_improvement_count += 1
-            if no_improvement_count >= threshold:
-                print(f"Stopping early at generation {gen+1} due to no improvement.")
-                break
         else:
             no_improvement_count = 0
 
         best_idx = np.argmax(fitness)
         if fitness[best_idx] > best_score:
+            old_best_features = best_features if best_features is not None else []
+            new_best_features = selected_features_list[best_idx]
+
+            # 計算特徵變化
+            added_features = set(new_best_features) - set(old_best_features)
+            removed_features = set(old_best_features) - set(new_best_features)
+            
+            # 打印特徵變化
+            if added_features:
+                print(f"+ Added {len(added_features)} features: {', '.join(sorted(added_features))}")
+            if removed_features:
+                print(f"- Removed {len(removed_features)} features: {', '.join(sorted(removed_features))}")
             best_score = fitness[best_idx]
-            best_features = selected_features_list[best_idx]
+            best_features = new_best_features
             best_params = param_list[best_idx]
             best_strategies = all_strategies[best_idx]
 
-        # 選擇（Roulette wheel）
-        # 確保 prob 是正確的機率分布
-        prob = fitness / fitness.sum()  # 或其他 normalize 的方式
-        population = np.array(population)  # 加這行，保證是 ndarray
+        # 選擇
+        prob = fitness / fitness.sum()
         indices = np.random.choice(population_size, size=population_size, replace=True, p=prob)
         selected = population[indices]
 
-
-        # 交配（single-point crossover）
+        # 交配
         next_gen = []
         for i in range(0, population_size, 2):
             p1 = selected[i]
@@ -626,47 +703,93 @@ for model_name, model in models.items():
             c2 = np.concatenate([p2[:cp], p1[cp:]])
             next_gen.extend([c1, c2])
 
-        # 動態突變率調整
-        if no_improvement_count >= 5:
-            mutation_rate = init_mutation_rate + ((1-init_mutation_rate) * (1 - no_improvement_count / threshold))
+        # 突變
+        if no_improvement_count >= 100:
+            mutation_rate = 1 + no_improvement_count
+        elif no_improvement_count >=20:
+            mutation_rate = 1 + no_improvement_count / 20
+        elif no_improvement_count >= 5:
+            mutation_rate = init_mutation_rate + ((0.8 - init_mutation_rate) * (1 - no_improvement_count / 20))
         else:
             mutation_rate = init_mutation_rate
 
-        # # 突變（bit flip）
-        # next_gen = np.array(next_gen)
-        # for i in range(population_size):
-        #     if np.random.rand() < mutation_rate:
-        #         mp = np.random.randint(num_features)
-        #         next_gen[i][mp] = 1 - next_gen[i][mp]
+        if mutation_rate/num_features >=1:
+            break
 
-        # 多點突變（讓突變率平均分配到每個基因位點）
         for i in range(population_size):
             for j in range(num_features):
                 if np.random.rand() < (mutation_rate / num_features):
                     next_gen[i][j] = 1 - next_gen[i][j]
 
+        population = np.array(next_gen)
 
-        population = next_gen
-        print(f"{model_name}Generation {gen+1}: Best cumulative return = {best_score:.4f}")
-        print(f"Best features: {best_features}")
+        print(f"{model_name} Generation {gen+1}: Best cumulative return = {best_score:.4f}")
+        print(f"number of All features: {num_features} no_improvement_count: {no_improvement_count} mutation_rate: {mutation_rate:.4f}")
+        print(f"Best features: {best_features} with {len(best_features)} features")
         print(f"Best parameters: {best_params}")
+
+
+        # 👉 每一代都存 checkpoint
+        checkpoint_data = {
+            'population': population,
+            'best_score': best_score,
+            'best_features': best_features,
+            'best_params': best_params,
+            'best_strategies': best_strategies,
+            'no_improvement_count': no_improvement_count,
+            'generation': gen + 1
+        }
+        save_checkpoint(checkpoint_path, checkpoint_data)
+
+        # 可以選擇不要每一代都做交叉驗證（會很慢），必要時再開啟
         cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
+        plot_strategies(best_strategies, best_features, best_params, model_name)
+        plot_crossval_results(cv_result, result_dir, model_name)
+        #用模型跑2024的資料
+        test_df = df_2024
+        if not test_df.empty:
+            X_test = test_df[best_features]
+            y_test = test_df['return']
+            model_clone = clone(model)
+            model_clone.set_params(**best_params)
+            model_clone.fit(df[df['year'] < 2024][best_features], df[df['year'] < 2024]['return'])
+            test_df['predicted_return'] = model_clone.predict(X_test)
+            test_df['true_return'] = y_test
+            top_10 = test_df.nlargest(10, 'predicted_return')
+            top_20 = test_df.nlargest(20, 'predicted_return')
+            top_30 = test_df.nlargest(30, 'predicted_return')
+            bottom_10 = test_df.nsmallest(10, 'predicted_return')
+            bottom_20 = test_df.nsmallest(20, 'predicted_return')
+            bottom_30 = test_df.nsmallest(30, 'predicted_return')
 
+            print(f"2025年YTD Top 10 預測報酬率：{top_10['predicted_return'].mean():.4f}, Top 20：{top_20['predicted_return'].mean():.4f}, Top 30：{top_30['predicted_return'].mean():.4f}")
 
+            print(f"2025年YTD Top 10 實際報酬率：{top_10['true_return'].mean():.4f}, Top 20：{top_20['true_return'].mean():.4f}, Top 30：{top_30['true_return'].mean():.4f}")
 
+            col_names = ['stock_id', 'year_month', 'predicted_return', 'true_return']
+            # 保留預測和實際報酬率的小數點後4位
+            top_Actually = test_df.sort_values(by='true_return', ascending=False).copy()
+            top_Actually = top_Actually[col_names].round(4)
+            top_predicted = test_df.sort_values(by='predicted_return', ascending=False).copy()
+            top_predicted = top_predicted[col_names].round(4)
+            top_Actually.to_csv(os.path.join(result_dir, f"{model_name}_2024_top_actual.csv"), index=False)
+            top_predicted.to_csv(os.path.join(result_dir, f"{model_name}_2024_top_predicted.csv"), index=False)
+            print(f"✅ 2024年 {model_name} 模型預測結果已儲存")
+        else:
+            print(f"⚠️ 2024年沒有資料可供測試 {model_name} 模型")
+                
+                
+               
 
-        
-    # 輸出結果
     print(f"\n✅ {model_name} 最佳累積報酬率：", round(best_score, 4))
     print(f"✅ {model_name} 最佳特徵組合：", best_features)
-    #不挑特徵畫圖
-    # plot_strategies(best_strategies, all_features, model_name+ ' (All Features)')
-    # plot_crossval_results(cv_result, result_dir, model_name + ' (All Features)')
-    # 挑特徵畫圖
+
+    # 最終做一次完整交叉驗證與圖表儲存
+    cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
     plot_strategies(best_strategies, best_features, best_params, model_name)
-    # 儲存交叉驗證結果
     plot_crossval_results(cv_result, result_dir, model_name)
-    # 儲存最佳策略
- 
 
 
+
+    # 刪除 checkpoint（或你也可以保留）
+    # os.remove(checkpoint_path)

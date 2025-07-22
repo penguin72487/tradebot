@@ -91,69 +91,69 @@ print(yearly_stock_counts)
 
 # 模型集合
 models = {
-    'Ridge': Ridge(
-        alpha=10.0,
-        fit_intercept=True,
-        solver='auto'
-    ),
-    'SVR': SVR(
-        kernel='rbf',
-        C=1.0,
-        epsilon=0.01
-    ),
-    'KNN': KNeighborsRegressor(
-        n_neighbors=7,
-        weights='distance',
-        algorithm='auto',
-        leaf_size=20,
-        p=2,
-        metric='minkowski'
-    ),
-    'ExtraTrees': ExtraTreesRegressor(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=5,
-        min_samples_leaf=3,
-        max_features='sqrt',
-        bootstrap=True
-    ),
-    'HistGB' : HistGradientBoostingRegressor(
-        max_iter=300,
-        learning_rate=0.05,
-        max_depth=6,
-        l2_regularization=0.1,
-        early_stopping=True
-    ),
+    # 'Ridge': Ridge(
+    #     alpha=10.0,
+    #     fit_intercept=True,
+    #     solver='auto'
+    # ),
+    # 'SVR': SVR(
+    #     kernel='rbf',
+    #     C=1.0,
+    #     epsilon=0.01
+    # ),
+    # 'KNN': KNeighborsRegressor(
+    #     n_neighbors=7,
+    #     weights='distance',
+    #     algorithm='auto',
+    #     leaf_size=20,
+    #     p=2,
+    #     metric='minkowski'
+    # ),
+    # 'ExtraTrees': ExtraTreesRegressor(
+    #     n_estimators=300,
+    #     max_depth=8,
+    #     min_samples_split=5,
+    #     min_samples_leaf=3,
+    #     max_features='sqrt',
+    #     bootstrap=True
+    # ),
+    # 'HistGB' : HistGradientBoostingRegressor(
+    #     max_iter=300,
+    #     learning_rate=0.05,
+    #     max_depth=6,
+    #     l2_regularization=0.1,
+    #     early_stopping=True
+    # ),
     'BayesianRidge': BayesianRidge(
         max_iter=300,
         tol=1e-4
     ),
-    'Linear': LinearRegression(
-        fit_intercept=True,
-        copy_X=True
-    ),
-    'RandomForest': RandomForestRegressor(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=5,
-        min_samples_leaf=3,
-        max_features='sqrt',
-        bootstrap=True
-    ),
-    'XGBoost': xgb.XGBRegressor(
-        objective='reg:squarederror', 
-        max_depth=4, 
-        eta=0.1, 
-        n_estimators=300
-    ),
-    'CatBoost': cb.CatBoostRegressor(
-        iterations=500,
-        learning_rate=0.03,
-        depth=6,
-        l2_leaf_reg=3,
-        loss_function='RMSE',
-        verbose=0
-    )
+    # 'Linear': LinearRegression(
+    #     fit_intercept=True,
+    #     copy_X=True
+    # ),
+    # 'RandomForest': RandomForestRegressor(
+    #     n_estimators=300,
+    #     max_depth=8,
+    #     min_samples_split=5,
+    #     min_samples_leaf=3,
+    #     max_features='sqrt',
+    #     bootstrap=True
+    # ),
+    # 'XGBoost': xgb.XGBRegressor(
+    #     objective='reg:squarederror', 
+    #     max_depth=4, 
+    #     eta=0.1, 
+    #     n_estimators=300
+    # ),
+    # 'CatBoost': cb.CatBoostRegressor(
+    #     iterations=500,
+    #     learning_rate=0.03,
+    #     depth=6,
+    #     l2_leaf_reg=3,
+    #     loss_function='RMSE',
+    #     verbose=0
+    # )
 }
 
 param_spaces = {
@@ -196,11 +196,11 @@ param_spaces = {
     },
     'BayesianRidge': {
         'max_iter': (100, 500),
-        'tol': (1e-6, 1e-2),
-        'alpha_1': (1e-7, 1e-3),
-        'alpha_2': (1e-7, 1e-3),
-        'lambda_1': (1e-7, 1e-3),
-        'lambda_2': (1e-7, 1e-3),
+        'tol': (1e-6, 1e8),
+        'alpha_1': (1e-7, 1e8),
+        'alpha_2': (1e-7, 1e8),
+        'lambda_1': (1e-7, 1e8),
+        'lambda_2': (1e-7, 1e8),
         'fit_intercept': [True, False],
         'compute_score': [True, False]
     },
@@ -651,7 +651,9 @@ for model_name, model in models.items():
         print(f"Best features: {best_features}")
         print(f"Best parameters: {best_params}")
         cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
-
+        plot_strategies(best_strategies, best_features, best_params, model_name)
+        # 儲存交叉驗證結果
+        plot_crossval_results(cv_result, result_dir, model_name)
 
 
 

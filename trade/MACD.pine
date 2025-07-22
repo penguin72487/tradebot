@@ -14,25 +14,28 @@ timelock = input(bool(0) ,"Time lock")
 // 判斷當前條是否在指定的時間範圍內
 inDateRange = time >= startTime and time <= endTime or (not timelock) 
 
+leverage = input(1, "Leverage")
+
 MACD = input.source(close, title="MACD")
 MACDsignal = input.source(close, title="MACDsignal")
 MACD_Cross = input(close, title="MACD Cross")
+MACD_Offset = input(2, title="MACD Offset")
 
-longCondition = MACD>MACDsignal and not na(MACD_Cross) and MACD<0
-closeLongCondition = MACD<MACDsignal and MACD<0
+longCondition = MACD[MACD_Offset]>MACDsignal[MACD_Offset] and not na(MACD_Cross[MACD_Offset])
+closeLongCondition = MACD[MACD_Offset]<MACDsignal[MACD_Offset] and MACD[MACD_Offset]<0
 
-shortCondition = MACD<MACDsignal and not na(MACD_Cross) and MACD>0
-closeShortCondition = MACD>MACDsignal and MACD>0
+shortCondition = MACD[MACD_Offset]<MACDsignal[MACD_Offset] and not na(MACD_Cross[MACD_Offset])
+closeShortCondition = MACD[MACD_Offset]>MACDsignal[MACD_Offset] and MACD[MACD_Offset]>0
 
 if(inDateRange)
     if(longCondition)
         strategy.close("Short")
-        strategy.entry("Long", strategy.long)
+        strategy.entry("Long", strategy.long, qty=leverage*strategy.equity/close)
     // if(closeLongCondition)
         // strategy.close("Long")
     if(shortCondition)
         strategy.close("Long")
-        strategy.entry("Short", strategy.short)
+        strategy.entry("Short", strategy.short, qty=leverage*strategy.equity/close)
     // if(closeShortCondition) 
         // strategy.close("Short")
 

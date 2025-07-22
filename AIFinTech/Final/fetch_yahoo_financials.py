@@ -30,7 +30,7 @@ else:
 # === 股票清單 ===
 all_stock_ids = df['代號'].unique()
 
-print("📦 抓取每檔股票 2000～2024 所有收盤價...")
+print("📦 抓取每檔股票 2000～2024加上2025YTD 所有收盤價...")
 
 for stock_id in tqdm(all_stock_ids):
     yf_id = f"{stock_id}.TW"
@@ -51,25 +51,32 @@ for stock_id in tqdm(all_stock_ids):
         if stock_years.empty:
             print(f"⚠️ {stock_id} 沒有財報資料，跳過")
             continue
-        first_year = int(stock_years.min())
-        start_attempts = [f"{y}-01-01" for y in range(first_year, 2025)]
+        first_year = 2000
+        last_year = 2025
+        for end_year in range(last_year, first_year - 1, -1):  # 從 2025 到 2000
+            for start_year in range(first_year, end_year + 1):  # 從 2000 到 end_year
+                start_date = f"{start_year}-01-01"
+                end_date = f"{end_year}-12-31"
 
-        for start_date in start_attempts:
-            try:
-                hist = yf.download(
-                    yf_id,
-                    start=start_date,
-                    end="2025-01-10",
-                    auto_adjust=False,
-                    progress=False,
-                    timeout=20
-                )
-                if hist is not None and not hist.empty:
-                    print(f"✅ {stock_id} 從 {start_date} 成功抓到資料")
-                    hist.reset_index().to_csv(price_csv_path, index=False)
-                    break
-            except Exception as e:
-                print(f"⚠️ {stock_id} 從 {start_date} 抓失敗：{e}")
+                try:
+                    hist = yf.download(
+                        yf_id,
+                        start=start_date,
+                        end=end_date,
+                        auto_adjust=False,
+                        progress=False,
+                        timeout=20
+                    )
+                    if hist is not None and not hist.empty:
+                        print(f"✅ {stock_id} 從 {start_date} 到 {end_date} 成功抓到資料")
+                        hist.reset_index().to_csv(price_csv_path, index=False)
+                        success = True
+                        break  # 成功就離開內層迴圈
+                except Exception as e:
+                    print(f"⚠️ {stock_id} 從 {start_date} 到 {end_date} 抓失敗：{e}")
+
+            if success:
+                break  # 成功就離開外層迴圈
 
 
     # 如果還是沒有抓到，就跳過

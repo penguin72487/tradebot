@@ -814,6 +814,9 @@ for model_name, model in models.items():
 
         # 可以選擇不要每一代都做交叉驗證（會很慢），必要時再開啟
         # cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
+        cv_result = backtest_cross_validation(df, best_features, best_params, model_name)
+        plot_strategies(best_strategies, best_features, best_params, model_name)
+        plot_crossval_results(cv_result, result_dir, model_name)
 
     print(f"\n✅ {model_name} 最佳累積報酬率：", round(best_score, 4))
     print(f"✅ {model_name} 最佳特徵組合：", best_features)

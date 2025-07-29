@@ -631,7 +631,7 @@ for model_name, model in models.items():
 
     num_params = len(param_spaces[model_name])
     start_generation = 0
-    init_density = 0.05
+    init_density = 0.025
 
     if os.path.exists(checkpoint_path):
         

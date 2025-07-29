@@ -9,6 +9,8 @@ import logging
 
 # 🏡 程式根目錄
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 📆 抓資料日期記錄檔
+LAST_FETCH_FILE = os.path.join(BASE_DIR, "last_fetch_date.txt")
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -25,8 +27,8 @@ logging.basicConfig(
 log = logging.getLogger()
 
 # 🧠 任務設定
-# GA_SCRIPT = "GaFeatureStrategyMutiModel.py"
-GA_SCRIPT = "GaFeatureStrategyMutiModelEX.py"  # 遺傳演算法策略腳本
+GA_SCRIPT = "GaFeatureStrategyMutiModel.py"
+# GA_SCRIPT = "GaFeatureStrategyMutiModelEX.py"  # 遺傳演算法策略腳本
 FETCH_SCRIPTS = ["fetch_Muti_yahoo_financials.py", "merge_and_compute_features.py"]
 
 # 💤 休息時間區段（不執行任何任務）
@@ -38,7 +40,7 @@ SLEEP_WINDOWS = [
 ]
 
 # 📊 抓資料與合併任務時間
-FETCH_WINDOW = ("18:00", "19:00")
+FETCH_WINDOW = ("18:00", "18:10")
 
 # 🔄 當前任務狀態
 current_process = None
@@ -104,9 +106,17 @@ while True:
         log.info(f"😴 {datetime.datetime.now()} 現在是休息時間，什麼都不執行喵～")
 
     # 📥 抓資料時段
-    elif time_in_range(*FETCH_WINDOW, now) and (last_fetch_date and last_fetch_date != datetime.datetime.now().strftime("%Y-%m-%d")):
+    elif time_in_range(*FETCH_WINDOW, now):
+        if os.path.exists(LAST_FETCH_FILE):
+            with open(LAST_FETCH_FILE, "r", encoding="utf-8") as f:
+                last_fetch_date = f.read().strip()
+                log.info(f"🔁 上次抓資料日期為：{last_fetch_date}")
+
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        if last_fetch_date != today_str:
+        if last_fetch_date == today_str:
+
+            log.info(f"📥 {datetime.datetime.now()} 今天已經抓過資料，跳過執行。")
+        else:
             kill_current_process()
 
             log.info(f"📥 {datetime.datetime.now()} 現在是抓資料時段，開始執行抓資料任務...")
@@ -123,14 +133,17 @@ while True:
             # 3. 遺傳演算法
             # 記錄今天已經抓過資料
             last_fetch_date = today_str
+            with open(LAST_FETCH_FILE, "w", encoding="utf-8") as f:
+                f.write(last_fetch_date)
+            log.info(f"📝 記錄抓資料日期為：{last_fetch_date}")
+
 
 
     # 📈 GA 策略時段
-    else:
-        if current_task != GA_SCRIPT or (current_process and current_process.poll() is not None):
-            log.info("💥 偵測到 GA 任務未執行或已崩潰，重新啟動...")
-            kill_current_process()
-            launch(GA_SCRIPT)
+    if not time_in_range(*FETCH_WINDOW, now) and not time_in_range(*SLEEP_WINDOWS[0], now) and (current_task != GA_SCRIPT or (current_process and current_process.poll() is not None)):
+        log.info("💥 偵測到 GA 任務未執行或已崩潰，重新啟動...")
+        kill_current_process()
+        launch(GA_SCRIPT)
 
 
     time.sleep(60)  # 每分鐘檢查一次

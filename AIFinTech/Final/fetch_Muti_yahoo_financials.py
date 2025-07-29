@@ -33,6 +33,7 @@ else:
 all_stock_ids = df['代號'].unique()
 # price_cache = dict()
 today_success_set = set()       # 今天成功抓到的股票
+today_success_pairs = set()     # 今天成功抓到的股票_年份組合
 previous_success_set = set()    # 從昨天快取中讀到的所有股票代號
 
 # 開頭這段才是對的
@@ -40,9 +41,11 @@ if os.path.exists(cache_path):
     with open(cache_path, 'r', encoding='utf-8') as f:
         price_cache = json.load(f)
     previous_success_set = set(k.split("_")[0] for k, v in price_cache.items() if v is not None)
+    print(f"🔄 從快取讀取了 {len(price_cache)} 檔股票的收盤價")
 else:
     price_cache = {}
     previous_success_set = set()
+    print("📦 沒有找到快取檔案，將重新抓取所有股票的收盤價喵～")
 
 
 price_cache_lock = Lock()  # 🔒 保護共享資源
@@ -117,12 +120,12 @@ def fetch_and_process_stock(stock_id):
                 local_cache[key] = last_close
         except Exception:
             local_cache[key] = None
-
     with price_cache_lock:
         price_cache.update(local_cache)
         today_success_set.add(stock_id)  # ✅ 成功就加入今天成功的集合
+        today_success_pairs.update(local_cache.keys())  # 累積今天成功的股票_年份組合
 
-
+    return f"✅ {stock_id} 資料處理完成"
     return f"✅ {stock_id} 資料處理完成"
 
 # 🎯 多執行緒跑起來
@@ -137,12 +140,22 @@ with open(cache_path, 'w', encoding='utf-8') as f:
     json.dump(price_cache, f, ensure_ascii=False, indent=2)
 
 # === 產生成功與失敗報告 ===
-newly_fetched = today_success_set - previous_success_set
-missing_today = previous_success_set - today_success_set
+# step 1. 建立今天成功的組合 set
 
-print(f"\n🆕 今天新增成功的股票（{len(newly_fetched)} 檔）: {sorted(newly_fetched)}")
-print(f"⚠️ 有抓過但今天沒抓到的股票（{len(missing_today)} 檔）: {sorted(missing_today)}")
-print(f"📊 總共抓取了 {len(price_cache)} 檔股票的收盤價")
+# step 2. 快取讀進來後：
+previous_success_pairs = set(price_cache.keys())
+
+# step 3. 判斷新增與缺漏
+newly_fetched = today_success_pairs - previous_success_pairs
+missing_today = previous_success_pairs - today_success_pairs
+
+# step 4. 顯示報告（選擇只印股票代號）
+newly_fetched_stocks = set(k.split('_')[0] for k in newly_fetched)
+missing_today_stocks = set(k.split('_')[0] for k in missing_today)
+
+print(f"\n🆕 今天新增成功的股票（{len(newly_fetched_stocks)} 檔）: {sorted(newly_fetched_stocks)}")
+print(f"⚠️ 有抓過但今天沒抓到的股票（{len(missing_today_stocks)} 檔）: {sorted(missing_today_stocks)}")
+
 # === 加入收盤價欄位到 df ===
 df['closing_price_year'] = df.apply(
     lambda x: price_cache.get(f"{x['代號']}_{x['year']}"), axis=1

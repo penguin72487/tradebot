@@ -623,28 +623,7 @@ def evaluate_individual(individual, model_name):
         params = decode_params(param_spaces[model_name], individual[-num_params:])
 
         # 動態建模
-        if model_name == 'XGBoost':
-            model = xgb.XGBRegressor(**params)
-        elif model_name == 'CatBoost':
-            model = cb.CatBoostRegressor(verbose=0, **params)
-        elif model_name == 'SVR':
-            model = SVR(**params)
-        elif model_name == 'Ridge':
-            model = Ridge(**params)
-        elif model_name == 'BayesianRidge':
-            model = BayesianRidge(**params)
-        elif model_name == 'Linear':
-            model = LinearRegression(**params)
-        elif model_name == 'KNN':
-            model = KNeighborsRegressor(**params)
-        elif model_name == 'ExtraTrees':
-            model = ExtraTreesRegressor(**params)
-        elif model_name == 'RandomForest':
-            model = RandomForestRegressor(**params)
-        elif model_name == 'HistGB':
-            model = HistGradientBoostingRegressor(**params)
-        else:
-            raise ValueError(f"未知模型：{model_name}")
+        model = init_models_by_name(model_name, params)
 
         # 執行策略回測
         result = backtest_strategy(df, selected, model)

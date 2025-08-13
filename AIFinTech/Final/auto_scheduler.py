@@ -27,8 +27,10 @@ logging.basicConfig(
 log = logging.getLogger()
 
 # 🧠 任務設定
-GA_SCRIPT = "GaFeatureStrategyMutiModel.py"
+# GA_SCRIPT = "GaFeatureStrategyMutiModel.py"
 # GA_SCRIPT = "GaFeatureStrategyMutiModelEX.py"  # 遺傳演算法策略腳本
+# GA_SCRIPT = "GaFeatureStrategyRidge.py"  # 遺傳演算法策略腳本
+GA_SCRIPT = "GaFeatureStrategyRidgeEX.py"  # 遺傳演算法策略腳本
 FETCH_SCRIPTS = ["fetch_Muti_yahoo_financials.py", "merge_and_compute_features.py"]
 
 # 💤 休息時間區段（不執行任何任務）
@@ -40,7 +42,17 @@ SLEEP_WINDOWS = [
 ]
 
 # 📊 抓資料與合併任務時間
-FETCH_WINDOW = ("18:00", "18:10")
+FETCH_WINDOW = [
+    ("18:00", "18:10")
+]
+
+EXECUTION_WINDOW = [
+    ("18:10", "23:59"),
+    ("00:00", "01:00"),
+    ("02:00", "05:00"),
+    ("06:00", "09:00"),
+    ("10:00", "17:00"),
+]
 
 # 🔄 當前任務狀態
 current_process = None
@@ -106,7 +118,7 @@ while True:
         log.info(f"😴 {datetime.datetime.now()} 現在是休息時間，什麼都不執行喵～")
 
     # 📥 抓資料時段
-    elif time_in_range(*FETCH_WINDOW, now):
+    elif any(time_in_range(start, end, now) for start, end in FETCH_WINDOW):
         if os.path.exists(LAST_FETCH_FILE):
             with open(LAST_FETCH_FILE, "r", encoding="utf-8") as f:
                 last_fetch_date = f.read().strip()
@@ -136,14 +148,10 @@ while True:
             with open(LAST_FETCH_FILE, "w", encoding="utf-8") as f:
                 f.write(last_fetch_date)
             log.info(f"📝 記錄抓資料日期為：{last_fetch_date}")
-
-
-
-    # 📈 GA 策略時段
-    if not time_in_range(*FETCH_WINDOW, now) and not time_in_range(*SLEEP_WINDOWS[0], now) and (current_task != GA_SCRIPT or (current_process and current_process.poll() is not None)):
-        log.info("💥 偵測到 GA 任務未執行或已崩潰，重新啟動...")
-        kill_current_process()
-        launch(GA_SCRIPT)
-
+    # Ga 🧬 遺傳演算法執行時段
+    elif any(time_in_range(start, end, now) for start, end in EXECUTION_WINDOW):
+        if current_task != GA_SCRIPT:
+            log.info(f"🚀 {datetime.datetime.now()} 現在是 GA 執行時段，啟動 GA 任務...")
+            launch(GA_SCRIPT)
 
     time.sleep(60)  # 每分鐘檢查一次

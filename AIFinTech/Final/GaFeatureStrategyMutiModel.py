@@ -421,6 +421,59 @@ def backtest_strategy(df, selected_features,model):
 
     return strategy_returns
 
+def backtest_strategy_by_year(df, selected_features, year, model):
+    """
+    回測特定年份的策略，返回不同 TopN 組合的策略報酬序列。
+    """
+    strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [10, 20, 30, 200]}
+    
+    train_years = years[:years.index(year) + 1]
+    test_year = year
+
+    train_df = df[df['year'].isin(train_years)]
+    test_df = df[df['year'] == test_year]
+
+    X_train = train_df[selected_features]
+    y_train = train_df['return']
+    X_test = test_df[selected_features]
+    y_test = test_df['return']
+
+    model_clone = clone(model)
+    import contextlib
+    with contextlib.redirect_stderr(open(os.devnull, 'w')):  # 靜音錯誤輸出
+        try:
+            model_clone.fit(X_train, y_train)
+            preds = model_clone.predict(X_test)
+        except Exception as e:
+            # print(f"❌ 模型訓練/預測失敗：{e}")
+            return strategy_returns
+
+    test_df = test_df.copy()
+    try:
+        test_df['predicted_return'] = model_clone.predict(X_test)
+    except Exception as e:
+        # print(f"❌ 預測失敗：{e}")
+        return strategy_returns
+
+    test_df['true_return'] = y_test
+
+    for n in [10, 20, 30, 200]:
+        if len(test_df) < n:
+            n= min(len(test_df), n)  # 如果資料不夠，調整 n
+        top_n = test_df.nlargest(n, 'predicted_return')
+        bottom_n = test_df.nsmallest(n, 'predicted_return')
+
+        long_return = top_n['true_return'].mean()
+        short_return = -bottom_n['true_return'].mean()
+        long_short = (long_return + short_return) / 2
+
+        strategy_returns[n]['long'].append(long_return)
+        strategy_returns[n]['short'].append(short_return)
+        strategy_returns[n]['long_short'].append(long_short)
+
+    return strategy_returns
+
+
 def plot_strategies(strategies, best_features, best_parameters, model_name='ridge'):
     plt.figure(figsize=(14, 11))
     best_label = ""
@@ -555,6 +608,81 @@ def backtest_cross_validation(df, selected_features, best_prameters, model_name=
 
     return pd.DataFrame(results)
 
+
+def backtest_cross_validation_by_year(df, selected_features, best_prameters, year, model_name='ridge'):
+
+    model = init_models_by_name(model_name, best_prameters)
+
+    train_years = years[:years.index(year) + 1]
+    test_years = years[years.index(year) + 1:]
+
+    train_df = df[df['year'].isin(train_years)]
+    strategy_returns = {n: {'long': [], 'short': [], 'long_short': []} for n in [10, 20, 30, 200]}
+
+    for test_year in test_years:
+        test_df = df[df['year'] == test_year]
+        if test_df.empty:
+            continue
+
+        X_train = train_df[selected_features]
+        y_train = train_df['return']
+        X_test = test_df[selected_features]
+        y_test = test_df['return']
+
+        model_clone = clone(model)
+        import contextlib
+        with contextlib.redirect_stderr(open(os.devnull, 'w')):  # 靜音錯誤輸出
+            try:
+                model_clone.fit(X_train, y_train)
+                preds = model_clone.predict(X_test)
+            except Exception as e:
+                # print(f"❌ 模型訓練/預測失敗：{e}")
+                continue
+
+        test_df = test_df.copy()
+        test_df['predicted_return'] = model_clone.predict(X_test)
+        test_df['true_return'] = y_test
+
+        for n in [10, 20, 30, 200]:
+            if len(test_df) < n:
+                n = min(len(test_df), n)  # 如果資料不夠，調整 n
+            top_n = test_df.nlargest(n, 'predicted_return')
+            bottom_n = test_df.nsmallest(n, 'predicted_return')
+
+            long_return = top_n['true_return'].mean()
+            short_return = -bottom_n['true_return'].mean()
+            long_short = (long_return + short_return) / 2
+
+            strategy_returns[n]['long'].append(long_return)
+            strategy_returns[n]['short'].append(short_return)
+            strategy_returns[n]['long_short'].append(long_short)
+
+    # 結果記錄
+    result_row = {
+        'TrainYears': f"{train_years[0]}-{train_years[-1]}",
+        'TestYears': f"{test_years[0]}-{test_years[-1]}"
+    }
+    if len(test_years) == 0:
+        return pd.DataFrame([result_row])
+    
+    test_year_range = test_years[-1] - test_years[0] + 1
+    
+    for n in [10, 20, 30, 200]:
+        for strategy_name in ['long', 'short', 'long_short']:
+            series = pd.Series(strategy_returns[n][strategy_name])
+            if series.empty:
+                result_row[f'Top{n}_{strategy_name}_Cumulative'] = np.nan
+                result_row[f'Top{n}_{strategy_name}_Annual'] = np.nan
+            else:
+                cum = (1 + series).prod() - 1
+                ann = float('-1')
+                if 1 + cum > 0:
+                    ann = (1 + cum) ** (1 / test_year_range) - 1
+                else:
+                    ann = float('-1')
+                result_row[f'Top{n}_{strategy_name}_Cumulative'] = round(cum, 4)
+                result_row[f'Top{n}_{strategy_name}_Annual'] = round(ann, 4)
+    return pd.DataFrame([result_row])
 
 
 

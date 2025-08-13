@@ -197,3 +197,6 @@ catboost_info/time_left.tsv
 catboost_info/learn/events.out.tfevents
 catboost_info/catboost_training.json
 AIFinTech/Final/gooddata/yahoo_price_cache.json
+AIFinTech/Final/results_EX_ga_roll_year/ckpt/*
+AIFinTech/Final/results_ga_roll_year/ckpt/*
+AIFinTech/Final/last_fetch_date.txt

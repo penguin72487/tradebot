@@ -31,7 +31,7 @@ log = logging.getLogger()
 # GA_SCRIPT = "GaFeatureStrategyMutiModelEX.py"  # 遺傳演算法策略腳本
 # GA_SCRIPT = "GaFeatureStrategyRidge.py"  # 遺傳演算法策略腳本
 GA_SCRIPT = "GaFeatureStrategyRidgeEX.py"  # 遺傳演算法策略腳本
-FETCH_SCRIPTS = ["fetch_Muti_yahoo_financials.py", "merge_and_compute_features.py"]
+FETCH_SCRIPTS = ["fetch_yahoo_to_DB.py"]
 
 # 💤 休息時間區段（不執行任何任務）
 SLEEP_WINDOWS = [
@@ -134,11 +134,6 @@ while True:
             log.info(f"📥 {datetime.datetime.now()} 現在是抓資料時段，開始執行抓資料任務...")
             # 1. 抓資料
             launch(FETCH_SCRIPTS[0])
-            current_process.wait()
-
-            log.info(f"📥 {datetime.datetime.now()} 資料抓取完成，開始合併特徵...")
-            # 2. 合併特徵
-            launch(FETCH_SCRIPTS[1])
             current_process.wait()
 
             log.info(f"📥 {datetime.datetime.now()} 特徵合併完成，開始遺傳演算法...")

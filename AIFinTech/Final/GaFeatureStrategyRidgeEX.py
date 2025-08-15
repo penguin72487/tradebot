@@ -41,6 +41,7 @@ base_dir  = os.path.dirname(file_path)
 result_dir = os.path.join(base_dir, 'results_EX_ga_roll_year')
 os.makedirs(result_dir, exist_ok=True)
 
+
 # ---- 簡單日誌器（同時寫檔/印出）----
 import logging
 log_path = os.path.join(result_dir, "run.log")
@@ -691,10 +692,10 @@ def ga_optimize_params(
 
                 if (m_probe is not None) and (pred_next is not None):
                     r_next = year_strategy_returns(pred_next)
-                    top_ns=(10,20,30,200)
-                    for tn,tp in zip(top_ns, KINDs):
-                        oos_val = r_next[int(tn)][tp]
-                        oos_msg += f" | nextY_OOS(Top{tn}/{tp})={oos_val:+.4f}"
+                    for tn in TOP_NS:
+                        for tp in KINDs:
+                            oos_val = r_next[tn][tp]
+                            oos_msg += f" | nextY_OOS(Top{tn}/{tp})={oos_val:+.4f}"
 
                 else:
                     oos_msg = " | nextY_OOS=NaN"
@@ -703,15 +704,27 @@ def ga_optimize_params(
 
 
         # 顯示細節
-        if enable_feature_selection:
+        sel_count = 0  # Initialize sel_count with a default value
+        if no_improve == 0:
             # 取出目前最佳個體的特徵位元
             bits = pop[gen_best_idx][:F] >= 0.5
             sel_cols_current = [c for c, b in zip(feat_cols, bits) if b]
             sel_count = len(sel_cols_current)
-
             preview = ", ".join(sel_cols_current)
-
+            tag = f"{progress_desc.replace(' ', '_')}_gen{gen+1:04d}"
+            out_dir = (viz_dir or checkpoint_dir or os.path.join(os.path.dirname(__file__), 'results_ga_roll_year', 'ga_viz'))
+            try:
+                # 以該代最佳個體繪圖
+                traj = evaluate_gene_traj(pop[gen_best_idx])
+                _plot_ga_inner_curves(traj, inner_years, out_dir, tag, viz_kinds=viz_kinds)
+                log(f"📈 [viz] 已輸出：{out_dir}/GA_{tag}_Top(10|20|30|200).png")
+            except Exception as e:
+                log(f"⚠️ [viz] 生成失敗（gen {gen+1}）：{e}")
+            path = os.path.join(checkpoint_dir, f"sel_features_gen{gen+1:04d}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(sel_cols_current))
             log(
+                f"Training years {inner_years[0]}-{inner_years[-1]} | Test year {test_year} | "
                 f"Gen {gen+1:04d} | best={best_score:.4f} | no_imp={no_improve:02d} | "
                 f"{oos_msg or ' | nextY_OOS=N/A'}"
                 f"mut={mut_intensity:.4f} | sel_features={sel_count} "
@@ -722,14 +735,6 @@ def ga_optimize_params(
                 f"Gen {gen+1:04d} | best={best_score:.4f} | no_imp={no_improve:02d} | "
                 f"mut={mut_intensity:.4f} | sel_features={sel_count} "
             )
-        # （可選）把每代最佳特徵名單存檔，便於追蹤
-        try:
-            if checkpoint_dir:
-                path = os.path.join(checkpoint_dir, f"sel_features_gen{gen+1:04d}.txt")
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(sel_cols_current))
-        except Exception:
-            pass
 
     pbar.close()
 
@@ -743,18 +748,6 @@ def ga_optimize_params(
             "best_params": best_params,
             "no_improve": no_improve
         })
-
-    # === 每代固定出圖（依 viz_every 控制頻率）===
-    if (gen + 1) % max(1, viz_every) == 0:
-        tag = f"{progress_desc.replace(' ', '_')}_gen{gen+1:04d}"
-        out_dir = (viz_dir or checkpoint_dir or os.path.join(os.path.dirname(__file__), 'results_ga_roll_year', 'ga_viz'))
-        try:
-            # 以該代最佳個體繪圖
-            traj = evaluate_gene_traj(pop[gen_best_idx])
-            _plot_ga_inner_curves(traj, inner_years, out_dir, tag, viz_kinds=viz_kinds)
-            log(f"📈 [viz] 已輸出：{out_dir}/GA_{tag}_Top(10|20|30|200).png")
-        except Exception as e:
-            log(f"⚠️ [viz] 生成失敗（gen {gen+1}）：{e}")
 
     # 在外層，拿到 best_cols 後（某一個訓練窗的最終結果）
     if best_cols is not None and ckpt_dir:
@@ -817,9 +810,9 @@ for i in outer_pbar:
         generations=1000,
         # --- 交配/初始突變率 ---
         cx_prob=0.85,
-        init_mut_prob=0.12,            # 你原本的 mut_prob 改名為 init_mut_prob
+        init_mut_prob=0.2,            # 你原本的 mut_prob 改名為 init_mut_prob
         # --- 早停 ---
-        improve_delta=1e-4,
+        improve_delta=1e-2,
         early_stop_patience=50,  # 連續 20 代無提升就早停
         # --- 特徵選擇（想開就 True）---
         enable_feature_selection=True,  # 是否同時做特徵選擇
@@ -861,10 +854,16 @@ for i in outer_pbar:
             oos_traj[n][kind].append(one_t[n][kind])
     oos_years.append(test_year)
 
-    # 目前 OOS 累積（以 Top10/long_short 做主指標）
-    oos_seq = [x if pd.notna(x) else 0.0 for x in oos_traj[10]['long_short']]
-    oos_cum = float(np.prod([1.0 + v for v in oos_seq]))
-    outer_pbar.set_postfix(year=test_year, oos_top10_ls=f"{oos_cum:.2f}x")
+    # 目前 OOS 累積 10,20,30,200，分別計算 long, short, long_short
+    oos_cum_dict = {kind: {} for kind in KINDs}
+    for n in TOP_NS:
+        for kind in KINDs:
+            oos_seq = oos_traj[n][kind]
+            oos_cum_dict[kind][n] = float(np.prod([1.0 + v for v in oos_seq if pd.notna(v)]))
+    outer_pbar.set_postfix(
+        year=test_year, 
+        **{f"oos_top{n}_{kind}": f"{oos_cum_dict[kind][n]:.2f}x" for n in TOP_NS for kind in KINDs}
+    )
 
     # (B) Forward：t ~ end
     future_years = years[i:]  # 從 t 到最後
@@ -926,11 +925,14 @@ for i in outer_pbar:
     # ---- 當輪摘要（關鍵數字）----
     key_yr_ret = one_t[10]['long_short']  # 當年 Top10 long_short
     key_forward_ann = row.get('Top10_long_short_Annual', np.nan)
-    log.info(
-        f"[{train_years[0]}-{train_years[-1]} -> {test_year}] "
-        f"OOS_t(Top10/LS)={key_yr_ret:+.4f} | OOS_cum(Top10/LS)={oos_cum:.2f}x | "
-        f"Forward_ann(Top10/LS)={key_forward_ann if pd.notna(key_forward_ann) else 'NaN'}"
-    )
+    for n in TOP_NS:
+        for kind in KINDs:
+            oos_cum = oos_cum_dict[kind][n]
+            log.info(
+                f"[{train_years[0]}-{train_years[-1]} -> {test_year}] "
+                f"OOS_t(Top{n}/{kind})={one_t[n][kind]:+.4f} | OOS_cum(Top{n}/{kind})={oos_cum:.2f}x | "
+                f"Forward_ann(Top{n}/{kind})={row.get(f'Top{n}_{kind}_Annual', 'NaN')}"
+            )
 
         # === 建一張「訓練窗總覽圖」：Inner + Forward 累積 + 年化（Top10/20/30/200 疊在一起） ===
     # 1) 取得 inner_traj（用當代 GA 最佳個體對應的「最終最佳參數/特徵」重新回算 inner_years）
@@ -973,17 +975,21 @@ for i in outer_pbar:
     log.info(f"🖼️ Window figure saved: {plot_path}")
 
 
-    training_rows.append({
-        'TrainStart': train_years[0],
-        'TrainEnd'  : train_years[-1],
-        'TestYear'  : test_year,
-        'OOS_Top10_LongShort' : round(float(key_yr_ret), 6) if pd.notna(key_yr_ret) else np.nan,
-        'OOS_Cum_Top10_LongShort' : round(float(oos_cum), 6),
-        'Forward_Annual_Top10_LongShort' : key_forward_ann,
-        'BestParams' : repr(best_params),
-        'Selected_Feature_Count': (len(best_cols) if best_cols is not None else np.nan),
-        'GA_Fitness' : round(float(best_fit), 6)
-    })
+    for n in TOP_NS:
+        for kind in KINDs:
+            training_rows.append({
+                'TrainStart': train_years[0],
+                'TrainEnd': train_years[-1],
+                'TestYear': test_year,
+                'TopN': n,
+                'Kind': kind,
+                'OOS_Return': round(float(one_t[n][kind]), 6) if pd.notna(one_t[n][kind]) else np.nan,
+                'OOS_Cumulative': round(float(oos_cum_dict[kind][n]), 6),
+                'Forward_Annual': row.get(f'Top{n}_{kind}_Annual', np.nan),
+                'BestParams': repr(best_params),
+                'Selected_Feature_Count': (len(best_cols) if best_cols is not None else np.nan),
+                'GA_Fitness': round(float(best_fit), 6)
+            })
 
 outer_pbar.close()
 

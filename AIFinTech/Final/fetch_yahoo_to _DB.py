@@ -235,8 +235,10 @@ if cached_rows:
     finally:
         # 不管成功與否都把觸發器打開（避免忘了）
         try:
+            print("🔄 開啟觸發器和物化檢視...")
             cur.execute("ALTER TABLE daily_prices ENABLE TRIGGER trg_refresh_fin_features;")
             # 如需刷新物化檢視，再執行（可視情況移到 try 裡）
+            print("🔄 刷新物化檢視 financial_features...")
             cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY financial_features;")
             conn.commit()
         except Exception as e2:

@@ -55,6 +55,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("ga_walk_forward")
 
+# Ensure log is a logger object and not overwritten later
+if not isinstance(log, logging.Logger):
+    raise TypeError("The 'log' variable must be a logger object.")
+
 df = pd.read_csv(file_path)
 
 # ========= 基礎前處理 =========
@@ -62,7 +66,7 @@ df['year_month'] = df['year_month'].astype(str)
 df['year'] = df['year_month'].str[:4].astype(int)
 df['return'] = df['return'] / 100.0
 df['current_return'] = df['return'].shift(1)
-df['current_return_label'] = (df['current_return'] > 0).astype(int)
+df['current_return_label'] = df['current_return'].apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
 
 # 數值欄位基底
 base_features = df.drop(columns=['year_month','year','return','return_label'], errors='ignore')\
@@ -85,14 +89,79 @@ changed_features = df.drop(columns=['year_month','year','return','return_label']
                      .select_dtypes(include=[np.number]).columns.tolist()
 
 # ========= 轉換 =========
+
+
+from sklearn.preprocessing import (
+    StandardScaler, MinMaxScaler, MaxAbsScaler, RobustScaler,
+    Normalizer, PowerTransformer, QuantileTransformer
+)
+from sklearn.impute import SimpleImputer
+from sklearn.decomposition import PCA
+
 def pca_whitening(X):
     X = np.asarray(X)
     X = SimpleImputer(strategy="median").fit_transform(X)
-    return PCA(whiten=True, svd_solver="auto").fit_transform(X)
+    return PCA(whiten=True).fit_transform(X)
+
+
+# 建立標準化版本
+import numpy as np
+log_trans = lambda x: np.log1p(x)  # log(x+1) to avoid log(0)
+def rank_scaler(X):
+    if isinstance(X, pd.DataFrame):
+        return X.rank(method="average", pct=True).to_numpy()
+    else:
+        # 如果是 numpy array，也做一樣的事（保險）
+        return pd.DataFrame(X).rank(method="average", pct=True).to_numpy()
+from sklearn.preprocessing import Normalizer
+l1norm = Normalizer(norm='l1')
+l2norm = Normalizer(norm='l2')
+def unit_vector_featurewise(X):
+    return X / np.linalg.norm(X, axis=0)
+
+def sigmoid_scaling(x):
+    X = np.asarray(X)
+    X = np.clip(X, -500, 500)  # 限制範圍
+    return 1 / (1 + np.exp(-X))
+
+def tanh_estimator_scaling(X):
+    X = np.asarray(X)
+    return 0.5 * (np.tanh(0.01 * (X - np.mean(X)) / np.std(X)) + 1)
+
+def zca_whitening(X):
+    X = np.asarray(X)
+    X = SimpleImputer(strategy="median").fit_transform(X)
+    sigma = np.cov(X, rowvar=False)
+    U, S, _ = np.linalg.svd(sigma)
+    epsilon = 1e-5
+    ZCAMatrix = U @ np.diag(1.0 / np.sqrt(S + epsilon)) @ U.T
+    return (X - np.mean(X, axis=0)) @ ZCAMatrix
+
+def row_maxabs_scaling(X):
+    X = np.asarray(X)  # 保證是 numpy array
+    max_per_row = np.max(np.abs(X), axis=1).reshape(-1, 1)  # 等效於 keepdims=True
+    return X / max_per_row
+def mean_centering(x):
+    return x - np.mean(x, axis=0)
+
+from sklearn.preprocessing import FunctionTransformer
+
 
 scalers = {
-    'z'  : StandardScaler(),
-    'pca': FunctionTransformer(pca_whitening, validate=False),
+    'z': StandardScaler(),
+    'minmax': MinMaxScaler(),
+    'maxabs': MaxAbsScaler(),
+    'robust': RobustScaler(),
+    # 'row_maxabs': FunctionTransformer(row_maxabs_scaling, validate=False),
+    # 'mean_centering': FunctionTransformer(mean_centering, validate=False),
+    # 'rank': FunctionTransformer(rank_scaler, validate=False),
+    # 'unit_vector': FunctionTransformer(unit_vector_featurewise, validate=False),
+
+    # 'tanh': FunctionTransformer(tanh_estimator_scaling, validate=False),
+    # 'pca': FunctionTransformer(pca_whitening, validate=False),
+    # 'zca': FunctionTransformer(zca_whitening, validate=False),
+    'power': PowerTransformer(method='yeo-johnson'),
+    'quantile': QuantileTransformer(output_distribution='normal', n_quantiles=100)
 }
 
 df = df.sort_values('year').reset_index(drop=True)
@@ -161,9 +230,14 @@ def fit_predict_one_year(model, train_df, test_df, feat_cols):
     try:
         m.fit(Xtr, ytr)
         preds = m.predict(Xte)
-    except Exception:
+    except Exception as e:
+        log.error(f"模型訓練或預測失敗: {e}")
         return None, None
-    out = test_df[['year']].copy()
+
+    cols = ['year']
+    if 'stock_id' in test_df.columns:
+        cols.append('stock_id')
+    out = test_df[cols].copy()
     out['true_return'] = yte.values
     out['predicted_return'] = preds
     return m, out
@@ -311,13 +385,18 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 0]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = inner_traj.get(n, {}).get(k, [])
             if len(seq) == 0:
                 continue
             cum = np.cumprod([1.0 + (v if pd.notna(v) else 0.0) for v in seq])
             ax.plot(x_inner[:len(cum)], cum, marker='o', label=f"Top{n}")
-        ax.set_title(f"{k} – {col_titles[0]}")
+            if len(cum) > 0 and cum[-1] > best_end:
+                best_end = cum[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – {col_titles[0]} (Best: {best_label} {best_end:.2f}×)")
         ax.set_yscale('log')
         ax.grid(True)
         if r == len(kinds)-1:
@@ -330,13 +409,18 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 1]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = future_returns_seq.get(n, {}).get(k, [])
             if len(seq) == 0:
                 continue
             cum = np.cumprod([1.0 + (v if pd.notna(v) else 0.0) for v in seq])
             ax.plot(x_fwd[:len(cum)], cum, marker='o', label=f"Top{n}")
-        ax.set_title(f"{k} – {col_titles[1]}")
+            if len(cum) > 0 and cum[-1] > best_end:
+                best_end = cum[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – {col_titles[1]} (Best: {best_label} {best_end:.2f}×)")
         ax.set_yscale('log')
         ax.grid(True)
         if r == len(kinds)-1:
@@ -348,6 +432,8 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 2]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = future_returns_seq.get(n, {}).get(k, [])
             seq = [0.0 if not pd.notna(v) else v for v in seq]
@@ -358,8 +444,10 @@ def _plot_window_all_in_one(
             years_span = np.arange(1, len(seq)+1)
             ann_t = np.power(cum, 1.0/years_span) - 1.0
             ax.plot(x_fwd[:len(ann_t)], ann_t, label=f"Top{n} (start {test_year})")
-
-        ax.set_title(f"{k} – Annualized: {test_year}→end")
+            if len(ann_t) > 0 and ann_t[-1] > best_end:
+                best_end = ann_t[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – Annualized: {test_year}→end (Best: {best_label} {best_end:.2%})")
         ax.grid(True)
         if r == len(kinds)-1:
             ax.set_xlabel("Year")
@@ -387,7 +475,7 @@ def ga_optimize_params(
     improve_delta=1e-4,
     early_stop_patience=10,
     enable_feature_selection=True,
-    init_density=0.05,
+    init_density=0.0005,
     n_jobs=-1,
     backend='loky',
     checkpoint_dir=None,
@@ -564,6 +652,20 @@ def ga_optimize_params(
     else:
         pop = init_population(population)
 
+    # === 每輪一開始輸出「當年實際全榜」 ===
+    actual_rank_dir = os.path.join(result_dir, "actual_ranks")
+    os.makedirs(actual_rank_dir, exist_ok=True)
+
+    actual_df = test_df[['year', 'stock_id', 'return']].copy()
+    actual_df = actual_df.rename(columns={'return': 'true_return'})
+    # 1 為最佳
+    actual_df['rank_true'] = actual_df['true_return'].rank(ascending=False, method='first').astype(int)
+    actual_df = actual_df.sort_values('rank_true')
+
+    actual_csv = os.path.join(actual_rank_dir, f"actual_rank_{test_year}.csv")
+    actual_df.to_csv(actual_csv, index=False)
+    # log.info(f"🗂️ 已輸出當年實際全榜：{actual_csv}")
+
     # ---- 主要循環 ----
     pbar = tqdm(range(start_gen, generations), desc=progress_desc, leave=False, ncols=100)
     for gen in pbar:
@@ -723,11 +825,41 @@ def ga_optimize_params(
             path = os.path.join(checkpoint_dir, f"sel_features_gen{gen+1:04d}.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(sel_cols_current))
+                        # === 有進步就輸出 Top200 預測名單（對 next_year_df，如無則跳過） ===
+            try:
+                if next_year_df is not None and not next_year_df.empty:
+                    # 取當代最佳的特徵選擇
+                    sel_cols_for_rank = sel_cols_current if len(sel_cols_current) > 0 else feat_cols
+                    # 取當代最佳參數
+                    params_probe = decode_params(space, pop[gen_best_idx][-P:])
+                    model_probe  = init_model_by_name(model_name, params_probe)
+
+                    m_probe, pred_next = fit_predict_one_year(model_probe, train_df, next_year_df, sel_cols_for_rank)
+                    if (m_probe is not None) and (pred_next is not None):
+                        # 排名（1 為最佳）
+                        pred_next = pred_next.copy()
+                        pred_next['rank_pred'] = pred_next['predicted_return'].rank(ascending=False, method='first').astype(int)
+                        pred_next['rank_true'] = pred_next['true_return'].rank(ascending=False, method='first').astype(int)
+                        # 取前 200
+                        topAll = pred_next.sort_values('rank_pred')
+
+                        rank_dir = os.path.join(checkpoint_dir or result_dir, "rank_lists")
+                        os.makedirs(rank_dir, exist_ok=True)
+                        next_y = int(pred_next['year'].iloc[0])
+                        csv_path = os.path.join(rank_dir, f"pred_topAll_gen{gen+1:04d}_year{next_y}.csv")
+                        cols_out = [c for c in ['year','stock_id','predicted_return','true_return','rank_pred','rank_true'] if c in topAll.columns]
+                        topAll[cols_out].to_csv(csv_path, index=False)
+                        log(f"📝 [rank] 已輸出當代 TopAll 預測名單：{csv_path}")
+                    else:
+                        log("📝 [rank] 此代預測資料不可用（模型或預測為 None）")
+            except Exception as e:
+                log(f"⚠️ [rank] 產出 Top200 名單失敗：{e}")
+
             log(
                 f"Training years {inner_years[0]}-{inner_years[-1]} | Test year {test_year} | "
                 f"Gen {gen+1:04d} | best={best_score:.4f} | no_imp={no_improve:02d} | "
-                f"{oos_msg or ' | nextY_OOS=N/A'}"
                 f"mut={mut_intensity:.4f} | sel_features={sel_count} "
+                f"{oos_msg or ' | nextY_OOS=N/A'}"
                 f"[{preview}] | best_params={best_params}"
             )
         else:
@@ -778,7 +910,7 @@ oos_years = []
 # 2) 訓練窗→整段年化
 forward_summary_rows = []
 
-min_years_needed = 3
+min_years_needed = 2
 
 # 用於彙總每個訓練窗的重點，最後另存 CSV
 training_rows = []
@@ -800,6 +932,20 @@ for i in outer_pbar:
     next_year_df = df[df['year'] == years[i+1]] if (i + 1) < len(years) else None
 
     desc = f"GA {train_start}-{train_end}"
+    # === 每輪一開始輸出「當年實際全榜」 ===
+    actual_rank_dir = os.path.join(result_dir, "actual_ranks")
+    os.makedirs(actual_rank_dir, exist_ok=True)
+
+    actual_df = test_df[['year', 'stock_id', 'return']].copy()
+    actual_df = actual_df.rename(columns={'return': 'true_return'})
+    # 1 為最佳
+    actual_df['rank_true'] = actual_df['true_return'].rank(ascending=False, method='first').astype(int)
+    actual_df = actual_df.sort_values('rank_true')
+
+    actual_csv = os.path.join(actual_rank_dir, f"actual_rank_{test_year}.csv")
+    actual_df.to_csv(actual_csv, index=False)
+    log.info(f"🗂️ 已輸出當年實際全榜：{actual_csv}")
+
     best_params, best_fit, best_cols = ga_optimize_params(
         model_name=MODEL_NAME,
         train_df=train_df,
@@ -816,7 +962,7 @@ for i in outer_pbar:
         early_stop_patience=50,  # 連續 20 代無提升就早停
         # --- 特徵選擇（想開就 True）---
         enable_feature_selection=True,  # 是否同時做特徵選擇
-        init_density=0.05,             # 特徵 bit 初始 1 的密度
+        init_density=0.0025,             # 特徵 bit 初始 1 的密度
         # --- 並行 ---
         n_jobs=GA_N_JOBS,
         backend='loky',
@@ -974,6 +1120,19 @@ for i in outer_pbar:
     )
     log.info(f"🖼️ Window figure saved: {plot_path}")
 
+    # === 當年（test_year）固定最佳參數模型的 Top200 預測名單 ===
+    final_rank_dir = os.path.join(result_dir, "rank_final")
+    os.makedirs(final_rank_dir, exist_ok=True)
+
+    _pred = pred_t.copy()
+    _pred['rank_pred'] = _pred['predicted_return'].rank(ascending=False, method='first').astype(int)
+    _pred['rank_true'] = _pred['true_return'].rank(ascending=False, method='first').astype(int)
+    final_topAll = _pred.sort_values('rank_pred')
+
+    final_csv = os.path.join(final_rank_dir, f"pred_top200_FINAL_{test_year}.csv")
+    cols_out = [c for c in ['year','stock_id','predicted_return','true_return','rank_pred','rank_true'] if c in final_topAll.columns]
+    final_topAll[cols_out].to_csv(final_csv, index=False)
+    log.info(f"📝 [final-rank] 已輸出最終 Top200（{test_year}）：{final_csv}")
 
     for n in TOP_NS:
         for kind in KINDs:

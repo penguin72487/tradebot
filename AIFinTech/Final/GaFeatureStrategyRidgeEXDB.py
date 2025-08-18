@@ -33,13 +33,30 @@ from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 import xgboost as xgb
 import catboost as cb
 
-warnings.filterwarnings("ignore", category=ConvergenceWarning)
-# 使用相對路徑讀取 CSV
-file_path = os.path.join(os.path.dirname(__file__), 'top200_cleaned_noname.csv')
-base_dir = os.path.dirname(file_path)
-result_dir = os.path.join(base_dir, 'results_ga_roll_year')
-os.makedirs(result_dir, exist_ok=True)  # 確保資料夾存在
+import psycopg2
+import psycopg2.extras
+from psycopg2.extras import execute_values
+from dotenv import load_dotenv
 
+
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
+# ========= 路徑 & 讀檔 =========
+file_path = os.path.join(os.path.dirname(__file__), 'GaFeatureStrategyRidgeEXDB.py')
+base_dir  = os.path.dirname(file_path)
+result_dir = os.path.join(base_dir, 'results_EX_DB_ga_roll_year')
+os.makedirs(result_dir, exist_ok=True)
+# 連接服務器
+
+load_dotenv()
+# === DB 連線設定 ===
+DB_CONFIG = {
+    "dbname": os.getenv("DBNAME"),
+    "user": os.getenv("USER"),
+    "password": os.getenv("PASSWORD"),
+    "host": os.getenv("HOST"),
+    "port": os.getenv("PORT")
+}
 
 # ---- 簡單日誌器（同時寫檔/印出）----
 import logging
@@ -53,18 +70,73 @@ logging.basicConfig(
     ]
 )
 log = logging.getLogger("ga_walk_forward")
+print(f"🔗 嘗試連線到資料庫 {DB_CONFIG['dbname']} 在 {DB_CONFIG['host']}:{DB_CONFIG['port']}")
 
-df = pd.read_csv(file_path)
+try:
+    conn = psycopg2.connect(**DB_CONFIG)
+    log.info("🔗 連線成功")
+except Exception as e:
+    log.error(f"🔗 連線失敗: {e}")
 
+sql = """
+SELECT *
+FROM financial_features
+ORDER BY stock_id, year
+"""
+
+# 使用 psycopg2 cursor (RealDictCursor) 取回 dict rows，再轉成 DataFrame
+try:
+    if 'conn' not in globals() or conn is None:
+        conn = psycopg2.connect(**DB_CONFIG)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+    df = pd.DataFrame(rows)
+    log.info(f"📥 從資料庫讀取 {len(df)} 筆")
+except Exception as e:
+    log.error(f"讀取資料失敗: {e}")
+    df = pd.DataFrame()
+finally:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+df = df.rename(columns={
+    'return_1y': 'return'
+})
+print(f"📊 讀取資料：{len(df)} 筆")
+df = df.dropna(how='any')
+print(f"📊 讀取資料：{len(df)} 筆")
+print(f"📊 feature_columns：{df.columns.tolist()}")
+
+# 統計所有 features 的 NA 數量
+df = df.replace([None, 'None', 'NaN', 'nan', '', np.inf, -np.inf, 'inf', '-inf', 'Inf', '-Inf', 'infinity', '-infinity', '∞', '-∞'], np.nan)
+df = df.dropna(how='any')
+na_counts = df.isna().sum()
+na_features = na_counts[na_counts > 0].index.tolist()
+print(f"📊 讀取資料：{len(df)} 筆")
+# 統計所有 features 的 NA 數量
+# 如果有 NA 的 column 就 drop 掉
+if na_features:
+    log.info(f"以下 features 有 NA，將被移除：{na_features}")
+    df = df.drop(columns=na_features)
+
+print(f"📊 特徵數量：{len(df.columns)} 個")
+df.to_csv(os.path.join(result_dir, "DB_financial_features.csv"), index=False, encoding='utf-8-sig')
+# 關閉游標和連線
 # ========= 基礎前處理 =========
-df['year_month'] = df['year_month'].astype(str)
-df['year'] = df['year_month'].str[:4].astype(int)
-df['return'] = df['return'] / 100.0
+# df['year_month'] = df['year_month'].astype(str)
+# df['year'] = df['year_month'].str[:4].astype(int)
 df['current_return'] = df['return'].shift(1)
-df['current_return_label'] = df['current_return'].apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+# Safely label previous return; treat NaN/None as 0 (neutral)
+df['current_return_label'] = df['current_return'].apply(
+    lambda x: 1 if (pd.notna(x) and x > 0) else (-1 if (pd.notna(x) and x < 0) else 0)
+)
 
 # 數值欄位基底
-base_features = df.drop(columns=['year_month','year','return','return_label'], errors='ignore')\
+base_features = df.drop(columns=['year','return','return_label'], errors='ignore')\
                   .select_dtypes(include=[np.number]).columns.tolist()
 
 # 差分比例變化
@@ -147,13 +219,14 @@ scalers = {
     'minmax': MinMaxScaler(),
     'maxabs': MaxAbsScaler(),
     'robust': RobustScaler(),
-    'row_maxabs': FunctionTransformer(row_maxabs_scaling, validate=False),
-    'mean_centering': FunctionTransformer(mean_centering, validate=False),
-    'rank': FunctionTransformer(rank_scaler, validate=False),
-    'unit_vector': FunctionTransformer(unit_vector_featurewise, validate=False),
-    'tanh': FunctionTransformer(tanh_estimator_scaling, validate=False),
-    'pca': FunctionTransformer(pca_whitening, validate=False),
-    'zca': FunctionTransformer(zca_whitening, validate=False),
+    # 'row_maxabs': FunctionTransformer(row_maxabs_scaling, validate=False),
+    # 'mean_centering': FunctionTransformer(mean_centering, validate=False),
+    # 'rank': FunctionTransformer(rank_scaler, validate=False),
+    # 'unit_vector': FunctionTransformer(unit_vector_featurewise, validate=False),
+
+    # 'tanh': FunctionTransformer(tanh_estimator_scaling, validate=False),
+    # 'pca': FunctionTransformer(pca_whitening, validate=False),
+    # 'zca': FunctionTransformer(zca_whitening, validate=False),
     'power': PowerTransformer(method='yeo-johnson'),
     'quantile': QuantileTransformer(output_distribution='normal', n_quantiles=100)
 }
@@ -184,6 +257,18 @@ for name, scaler in scalers.items():
 exclude_cols = ['year_month','year','return','return_label','current_return','current_return_label']
 all_features = df.drop(columns=[c for c in exclude_cols if c in df.columns])\
                  .select_dtypes(include=[np.number]).columns.tolist()
+
+print(f"📊 可用特徵：{len(all_features)} 個")
+# # 統計所有 features 的 NA 數量
+# na_counts = df.isna().sum()
+# na_features = na_counts[na_counts > 0].index.tolist()
+
+# # 如果有 NA 的 column 就 drop 掉
+# if na_features:
+#     log.info(f"以下 features 有 NA，將被移除：{na_features}")
+#     df = df.drop(columns=na_features)
+
+# print(f"📊 特徵數量：{len(df.columns)} 個")
 
 # 去掉首尾年
 years = years_all[:]
@@ -227,7 +312,11 @@ def fit_predict_one_year(model, train_df, test_df, feat_cols):
     except Exception as e:
         log.error(f"模型訓練或預測失敗: {e}")
         return None, None
-    out = test_df[['year']].copy()
+
+    cols = ['year']
+    if 'stock_id' in test_df.columns:
+        cols.append('stock_id')
+    out = test_df[cols].copy()
     out['true_return'] = yte.values
     out['predicted_return'] = preds
     return m, out
@@ -375,13 +464,18 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 0]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = inner_traj.get(n, {}).get(k, [])
             if len(seq) == 0:
                 continue
             cum = np.cumprod([1.0 + (v if pd.notna(v) else 0.0) for v in seq])
             ax.plot(x_inner[:len(cum)], cum, marker='o', label=f"Top{n}")
-        ax.set_title(f"{k} – {col_titles[0]}")
+            if len(cum) > 0 and cum[-1] > best_end:
+                best_end = cum[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – {col_titles[0]} (Best: {best_label} {best_end:.2f}×)")
         ax.set_yscale('log')
         ax.grid(True)
         if r == len(kinds)-1:
@@ -394,13 +488,18 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 1]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = future_returns_seq.get(n, {}).get(k, [])
             if len(seq) == 0:
                 continue
             cum = np.cumprod([1.0 + (v if pd.notna(v) else 0.0) for v in seq])
             ax.plot(x_fwd[:len(cum)], cum, marker='o', label=f"Top{n}")
-        ax.set_title(f"{k} – {col_titles[1]}")
+            if len(cum) > 0 and cum[-1] > best_end:
+                best_end = cum[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – {col_titles[1]} (Best: {best_label} {best_end:.2f}×)")
         ax.set_yscale('log')
         ax.grid(True)
         if r == len(kinds)-1:
@@ -412,6 +511,8 @@ def _plot_window_all_in_one(
     for k in kinds:
         r = kind_rows[k]
         ax = axes[r, 2]
+        best_end = -np.inf
+        best_label = ""
         for n in top_ns:
             seq = future_returns_seq.get(n, {}).get(k, [])
             seq = [0.0 if not pd.notna(v) else v for v in seq]
@@ -422,8 +523,10 @@ def _plot_window_all_in_one(
             years_span = np.arange(1, len(seq)+1)
             ann_t = np.power(cum, 1.0/years_span) - 1.0
             ax.plot(x_fwd[:len(ann_t)], ann_t, label=f"Top{n} (start {test_year})")
-
-        ax.set_title(f"{k} – Annualized: {test_year}→end")
+            if len(ann_t) > 0 and ann_t[-1] > best_end:
+                best_end = ann_t[-1]
+                best_label = f"Top{n}"
+        ax.set_title(f"{k} – Annualized: {test_year}→end (Best: {best_label} {best_end:.2%})")
         ax.grid(True)
         if r == len(kinds)-1:
             ax.set_xlabel("Year")
@@ -628,6 +731,20 @@ def ga_optimize_params(
     else:
         pop = init_population(population)
 
+    # === 每輪一開始輸出「當年實際全榜」 ===
+    actual_rank_dir = os.path.join(result_dir, "actual_ranks")
+    os.makedirs(actual_rank_dir, exist_ok=True)
+
+    actual_df = test_df[['year', 'stock_id', 'return']].copy()
+    actual_df = actual_df.rename(columns={'return': 'true_return'})
+    # 1 為最佳
+    actual_df['rank_true'] = actual_df['true_return'].rank(ascending=False, method='first').astype(int)
+    actual_df = actual_df.sort_values('rank_true')
+
+    actual_csv = os.path.join(actual_rank_dir, f"actual_rank_{test_year}.csv")
+    actual_df.to_csv(actual_csv, index=False)
+    # log.info(f"🗂️ 已輸出當年實際全榜：{actual_csv}")
+
     # ---- 主要循環 ----
     pbar = tqdm(range(start_gen, generations), desc=progress_desc, leave=False, ncols=100)
     for gen in pbar:
@@ -787,6 +904,36 @@ def ga_optimize_params(
             path = os.path.join(checkpoint_dir, f"sel_features_gen{gen+1:04d}.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(sel_cols_current))
+                        # === 有進步就輸出 Top200 預測名單（對 next_year_df，如無則跳過） ===
+            try:
+                if next_year_df is not None and not next_year_df.empty:
+                    # 取當代最佳的特徵選擇
+                    sel_cols_for_rank = sel_cols_current if len(sel_cols_current) > 0 else feat_cols
+                    # 取當代最佳參數
+                    params_probe = decode_params(space, pop[gen_best_idx][-P:])
+                    model_probe  = init_model_by_name(model_name, params_probe)
+
+                    m_probe, pred_next = fit_predict_one_year(model_probe, train_df, next_year_df, sel_cols_for_rank)
+                    if (m_probe is not None) and (pred_next is not None):
+                        # 排名（1 為最佳）
+                        pred_next = pred_next.copy()
+                        pred_next['rank_pred'] = pred_next['predicted_return'].rank(ascending=False, method='first').astype(int)
+                        pred_next['rank_true'] = pred_next['true_return'].rank(ascending=False, method='first').astype(int)
+                        # 取前 200
+                        topAll = pred_next.sort_values('rank_pred')
+
+                        rank_dir = os.path.join(checkpoint_dir or result_dir, "rank_lists")
+                        os.makedirs(rank_dir, exist_ok=True)
+                        next_y = int(pred_next['year'].iloc[0])
+                        csv_path = os.path.join(rank_dir, f"pred_topAll_gen{gen+1:04d}_year{next_y}.csv")
+                        cols_out = [c for c in ['year','stock_id','predicted_return','true_return','rank_pred','rank_true'] if c in topAll.columns]
+                        topAll[cols_out].to_csv(csv_path, index=False)
+                        log(f"📝 [rank] 已輸出當代 TopAll 預測名單：{csv_path}")
+                    else:
+                        log("📝 [rank] 此代預測資料不可用（模型或預測為 None）")
+            except Exception as e:
+                log(f"⚠️ [rank] 產出 Top200 名單失敗：{e}")
+
             log(
                 f"Training years {inner_years[0]}-{inner_years[-1]} | Test year {test_year} | "
                 f"Gen {gen+1:04d} | best={best_score:.4f} | no_imp={no_improve:02d} | "
@@ -864,6 +1011,20 @@ for i in outer_pbar:
     next_year_df = df[df['year'] == years[i+1]] if (i + 1) < len(years) else None
 
     desc = f"GA {train_start}-{train_end}"
+    # === 每輪一開始輸出「當年實際全榜」 ===
+    actual_rank_dir = os.path.join(result_dir, "actual_ranks")
+    os.makedirs(actual_rank_dir, exist_ok=True)
+
+    actual_df = test_df[['year', 'stock_id', 'return']].copy()
+    actual_df = actual_df.rename(columns={'return': 'true_return'})
+    # 1 為最佳
+    actual_df['rank_true'] = actual_df['true_return'].rank(ascending=False, method='first').astype(int)
+    actual_df = actual_df.sort_values('rank_true')
+
+    actual_csv = os.path.join(actual_rank_dir, f"actual_rank_{test_year}.csv")
+    actual_df.to_csv(actual_csv, index=False)
+    log.info(f"🗂️ 已輸出當年實際全榜：{actual_csv}")
+
     best_params, best_fit, best_cols = ga_optimize_params(
         model_name=MODEL_NAME,
         train_df=train_df,
@@ -1038,6 +1199,19 @@ for i in outer_pbar:
     )
     log.info(f"🖼️ Window figure saved: {plot_path}")
 
+    # === 當年（test_year）固定最佳參數模型的 Top200 預測名單 ===
+    final_rank_dir = os.path.join(result_dir, "rank_final")
+    os.makedirs(final_rank_dir, exist_ok=True)
+
+    _pred = pred_t.copy()
+    _pred['rank_pred'] = _pred['predicted_return'].rank(ascending=False, method='first').astype(int)
+    _pred['rank_true'] = _pred['true_return'].rank(ascending=False, method='first').astype(int)
+    final_topAll = _pred.sort_values('rank_pred')
+
+    final_csv = os.path.join(final_rank_dir, f"pred_top200_FINAL_{test_year}.csv")
+    cols_out = [c for c in ['year','stock_id','predicted_return','true_return','rank_pred','rank_true'] if c in final_topAll.columns]
+    final_topAll[cols_out].to_csv(final_csv, index=False)
+    log.info(f"📝 [final-rank] 已輸出最終 Top200（{test_year}）：{final_csv}")
 
     for n in TOP_NS:
         for kind in KINDs:

@@ -9,7 +9,6 @@ DROP FUNCTION IF EXISTS refresh_financial_features();
 DROP INDEX IF EXISTS idx_fin_features_unique;
 DROP MATERIALIZED VIEW IF EXISTS financial_features;
 DROP VIEW IF EXISTS v_year_open_close;
--- 你若仍需舊的 v_year_end_close，可保留；這裡我統一用年開/收價的新 view
 
 -- ========================
 -- 1) 股票主檔
@@ -61,43 +60,56 @@ CREATE TABLE IF NOT EXISTS daily_prices (
 CREATE INDEX IF NOT EXISTS idx_daily_prices_stock_dt ON daily_prices(stock_id, dt DESC);
 
 -- ========================
--- 4) 每年第一/最後收盤價 View（年開/年收）
+-- 4) 每年第一/最後價格 View（同時帶出 close 與 adj_close）
 -- ========================
 CREATE OR REPLACE VIEW v_year_open_close AS
 WITH base AS (
   SELECT stock_id,
          EXTRACT(YEAR FROM dt)::int AS yr,
          dt,
-         close_p
+         close_p,
+         adj_close
   FROM daily_prices
-  WHERE close_p IS NOT NULL
+  WHERE close_p IS NOT NULL OR adj_close IS NOT NULL
 ),
 firsts AS (
   SELECT DISTINCT ON (stock_id, yr)
-         stock_id, yr, close_p AS first_close
+         stock_id, yr,
+         close_p   AS first_close,
+         adj_close AS first_adj_close
   FROM base
   ORDER BY stock_id, yr, dt ASC
 ),
 lasts AS (
   SELECT DISTINCT ON (stock_id, yr)
-         stock_id, yr, close_p AS last_close
+         stock_id, yr,
+         close_p   AS last_close,
+         adj_close AS last_adj_close
   FROM base
   ORDER BY stock_id, yr, dt DESC
 )
-SELECT f.stock_id, f.yr AS year, f.first_close, l.last_close
+SELECT f.stock_id, f.yr AS year,
+       f.first_close,  l.last_close,
+       f.first_adj_close, l.last_adj_close
 FROM firsts f
 JOIN lasts  l USING (stock_id, yr);
 
 -- ========================
 -- 5) financial_features (物化 View)
---    - current_return = (年收 / 年開) - 1
---    - future_return  = 下一年的 current_return（同一 stock 分組後 LEAD）
+--    指標：用 close_p（年收）
+--    報酬：用 adj_close（年開/年收）
+--    - current_return = (年末 adj / 年初 adj) - 1
 --    - current_return_label：>0 → 1，=0 → 0，<0 → -1
---    - 過濾掉 current_return / future_return 為 NULL、NaN、±Infinity 的列
+--    - 僅針對 current_return 檢查 NULL/NaN/±Inf
 -- ========================
+if EXISTS financial_features THEN
+    DROP MATERIALIZED VIEW financial_features;
+END IF;
 CREATE MATERIALIZED VIEW financial_features AS
 WITH oc AS (
-  SELECT stock_id, year, first_close, last_close
+  SELECT stock_id, year,
+         first_close,  last_close,
+         first_adj_close, last_adj_close
   FROM v_year_open_close
 ),
 raw AS (
@@ -105,20 +117,22 @@ raw AS (
       a.stock_id,
       a.year,
 
-      -- 仍保留年末收盤價欄（用 last_close）
+      -- 年末收盤價（用 close_p 的 year-end，供估值/指標計算與檢視）
       oc.last_close AS closing_price_year,
 
-      -- 估值與財務指標（保留你既有計算，做 NULLIF 以避免除以 0）
-      (oc.last_close * a.發行量_萬張 * 1000)                                         AS market_cap_mil,  -- NUMERIC
-      (oc.last_close / NULLIF((a.股東權益總額_億 * 100 / NULLIF(a.發行量_萬張,0)),0)) AS pb_ratio,        -- NUMERIC
-      ((oc.last_close * a.發行量_萬張 * 1000) / NULLIF((a.營收_億 * 100),0))         AS ps_ratio,        -- NUMERIC
-      ((a.淨利率_pct/100.0 * a.營收_億) / NULLIF(a.股東權益總額_億,0))               AS roe_m,           -- NUMERIC
-      (a.營益_億 / NULLIF(a.營收_億,0))                                               AS opm,             -- NUMERIC
-      (a.淨利率_pct/100.0)                                                            AS npm,             -- NUMERIC
-      (a.roa_pct/100.0)                                                                AS roa,             -- NUMERIC
-      (a.負債總額_億 / NULLIF(a.股東權益總額_億,0))                                   AS debt_to_equity,  -- NUMERIC
-      (a.流動資產對流動負債_pct/100.0)                                                AS current_ratio_m, -- NUMERIC
-      (a.速動資產對流動負債_pct/100.0)                                                AS quick_ratio_m,   -- NUMERIC
+      -- 估值與財務指標（全部用 close_p）
+      (oc.last_close * a.發行量_萬張 * 1000)                                         AS market_cap_mil,
+      (oc.last_close / NULLIF((a.股東權益總額_億 * 100 / NULLIF(a.發行量_萬張,0)),0)) AS pb_ratio,
+      ((oc.last_close * a.發行量_萬張 * 1000) / NULLIF((a.營收_億 * 100),0))         AS ps_ratio,
+
+      -- 獲利能力等（原樣保留）
+      ((a.淨利率_pct/100.0 * a.營收_億) / NULLIF(a.股東權益總額_億,0))               AS roe_m,
+      (a.營益_億 / NULLIF(a.營收_億,0))                                               AS opm,
+      (a.淨利率_pct/100.0)                                                            AS npm,
+      (a.roa_pct/100.0)                                                                AS roa,
+      (a.負債總額_億 / NULLIF(a.股東權益總額_億,0))                                   AS debt_to_equity,
+      (a.流動資產對流動負債_pct/100.0)                                                AS current_ratio_m,
+      (a.速動資產對流動負債_pct/100.0)                                                AS quick_ratio_m,
       (a.存貨週轉率)                                                                    AS inventory_turnover_m,
       (a.應收帳款週轉率)                                                                AS ar_turnover_m,
 
@@ -126,8 +140,8 @@ raw AS (
       ((a.營益_億 - LAG(a.營益_億) OVER w) / NULLIF(LAG(a.營益_億) OVER w,0))         AS op_growth_m,
       ((a.淨利率_pct - LAG(a.淨利率_pct) OVER w) / NULLIF(LAG(a.淨利率_pct) OVER w,0)) AS net_income_growth_m,
 
-      -- 重點：年內報酬（轉成 double precision 便於 NaN 判斷）
-      ((oc.last_close / NULLIF(oc.first_close,0)) - 1)::double precision               AS current_return
+      -- 年內報酬（用 adj_close）
+      ((oc.last_adj_close / NULLIF(oc.first_adj_close,0)) - 1)::double precision       AS current_return
   FROM annual_financials a
   LEFT JOIN oc
     ON a.stock_id = oc.stock_id AND a.year = oc.year
@@ -136,7 +150,6 @@ raw AS (
 enriched AS (
   SELECT
       r.*,
-      LEAD(r.current_return) OVER (PARTITION BY r.stock_id ORDER BY r.year)::double precision AS future_return,
       CASE
         WHEN r.current_return > 0 THEN 1
         WHEN r.current_return < 0 THEN -1
@@ -150,16 +163,12 @@ SELECT
     debt_to_equity, current_ratio_m, quick_ratio_m,
     inventory_turnover_m, ar_turnover_m,
     op_growth_m, net_income_growth_m,
-    current_return, future_return, current_return_label
+    current_return, current_return_label
 FROM enriched
--- 列過濾：移除 current_return / future_return 的 NULL、NaN、±Inf
 WHERE
     current_return IS NOT NULL
-    AND future_return  IS NOT NULL
-    AND (current_return = current_return)          -- 不是 NaN
-    AND (future_return  = future_return)           -- 不是 NaN
+    AND (current_return = current_return)          -- 非 NaN
     AND current_return NOT IN ('Infinity'::float8, '-Infinity'::float8)
-    AND future_return  NOT IN ('Infinity'::float8, '-Infinity'::float8)
 WITH DATA;
 
 -- 為 CONCURRENTLY refresh 預留的唯一索引（手動使用時可用）
@@ -172,7 +181,6 @@ CREATE UNIQUE INDEX idx_fin_features_unique ON financial_features(stock_id, year
 CREATE OR REPLACE FUNCTION refresh_financial_features()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- 在同一交易中執行一般 REFRESH（會鎖住 MView 約略數秒～視大小）
     REFRESH MATERIALIZED VIEW financial_features;
     RETURN NULL;
 END;
@@ -184,6 +192,6 @@ FOR EACH STATEMENT
 EXECUTE FUNCTION refresh_financial_features();
 
 -- ========================
--- 7) 小檢查（可選）：看標籤分佈
+-- 7) 小檢查（可選）
 -- ========================
 -- SELECT current_return_label, COUNT(*) FROM financial_features GROUP BY 1 ORDER BY 1;

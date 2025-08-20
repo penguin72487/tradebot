@@ -39,14 +39,22 @@ except Exception as e:
 cur = conn.cursor()
 cur.execute("ALTER TABLE daily_prices DISABLE TRIGGER trg_refresh_fin_features;")
 cur.execute("""
-    SELECT s.stock_id, COALESCE(MAX(dp.dt), '2000-01-01') AS last_date
+    SELECT s.stock_id,
+           MIN(dp.dt) AS first_date,
+           MAX(dp.dt) AS last_date
     FROM stocks s
     LEFT JOIN daily_prices dp ON s.stock_id = dp.stock_id
     GROUP BY s.stock_id
 """)
 rows = cur.fetchall()
-df = pd.DataFrame(rows, columns=['代號', '最後交易日'])
-df['代號'] = df['代號'].astype(int)  # Ensure stock_id is of type int
+df = pd.DataFrame(rows, columns=['代號', '第一交易日', '最後交易日'])
+df['代號'] = df['代號'].astype(int)
+
+# 轉成 Python date，若為 NULL 則填入 2000-01-01（方便後續比較與 year 屬性）
+default_First_Date = pd.to_datetime('2000-01-01').date()
+default_Last_Date = pd.to_datetime('2025-12-31').date()
+df['第一交易日'] = pd.to_datetime(df['第一交易日'], errors='coerce').dt.date.fillna(default_Last_Date)
+df['最後交易日'] = pd.to_datetime(df['最後交易日'], errors='coerce').dt.date.fillna(default_First_Date)
 
 # === 股票清單 ===
 all_stock_ids = df['代號'].unique()
@@ -163,6 +171,95 @@ def fetch_and_process_stock(stock_id):
 
     return f"✅ {stock_id} 資料處理完成"
 
+
+def fetch_and_process_stock_early(stock_id):
+    yf_id = f"{stock_id}.TW"
+    hist = None
+
+    # 取出資料庫紀錄的最早交易日（第一交易日）
+    first_date = df.loc[df['代號'] == stock_id, '第一交易日'].values[0]
+    if first_date is None:
+        return f"❌ {stock_id} 無法取得資料庫最早交易日"
+
+    # 如果已經有 2000 年或更早的資料，則不需要再抓更早的價格
+    if first_date <= pd.to_datetime('2000-01-04').date():
+        print(f"🔁 {stock_id} 已有 2000 年或更早的資料，跳過抓取")
+        return f"✅ {stock_id} 資料處理完成（無需抓更早）"
+
+    # 我們要抓到 first_date 之前一天為止的歷史資料（從 2000-01-01 開始）
+    fetch_start = "2000-01-01"
+    fetch_end_date = (pd.to_datetime(first_date) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    start_year = 2000
+    end_year = pd.to_datetime(fetch_end_date).year
+
+    # 嘗試一次抓完整區間；若失敗再用逐年縮短的方式重試
+    for try_end_year in range(end_year, start_year - 1, -1):
+        if try_end_year == end_year:
+            start = fetch_start
+            end = fetch_end_date
+        else:
+            start = fetch_start
+            end = f"{try_end_year}-12-31"
+
+        try:
+            hist = yf.download(
+                yf_id,
+                start=start,
+                end=end,
+                auto_adjust=False,
+                progress=False,
+                timeout=20
+            )
+            if hist is not None and not hist.empty:
+                hist.reset_index(inplace=True)  # Ensure 'Date' is a regular column
+                hist = hist.loc[:, ~hist.columns.duplicated()]
+                print(f"✅ {stock_id} 從 {start} 到 {end} 抓取成功（用於補抓舊資料）")
+                break
+        except Exception as e:
+            print(f"⚠️ {stock_id} 從 {start} 到 {end} 抓取失敗：{e}")
+            continue
+
+    def _to_date_str(val):
+        if isinstance(val, pd.Series):
+            val = val.iloc[0]
+        ts = pd.to_datetime(val, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return ts.strftime("%Y-%m-%d")
+
+    def _first_scalar(x):
+        val = x.iloc[0] if isinstance(x, pd.Series) else x
+        if pd.isna(val) or isinstance(val, pd._libs.tslibs.nattype.NaTType):
+            return -1
+        return val
+
+    if hist is None or hist.empty:
+        print(f"⚠️ {stock_id}: 完全抓不到任何舊資料（從 {fetch_start} 到 {fetch_end_date}）")
+        return f"❌ {stock_id} 完全抓不到任何資料"
+
+    # 將抓到的舊資料逐列加入 cached_rows（注意不要覆寫外層的 stock_id）
+    for _, row in hist.iterrows():
+        sid = int(stock_id)
+        dt = _to_date_str(row['Date'])
+        if dt is None:
+            continue
+        op = float(_first_scalar(row['Open']))
+        hi = float(_first_scalar(row['High']))
+        lo = float(_first_scalar(row['Low']))
+        cl = float(_first_scalar(row['Close']))
+        ac = float(_first_scalar(row['Adj Close']))
+        vol_raw = _first_scalar(row['Volume'])
+        vol = int(vol_raw) if (vol_raw is not None and not pd.isna(vol_raw) and not math.isnan(float(vol_raw))) else 0
+        if op == -1 or hi == -1 or lo == -1 or cl == -1 or ac == -1:
+            continue
+        cached_rows.append((sid, dt, op, hi, lo, cl, ac, vol))
+
+    hist_end_date = pd.to_datetime(hist['Date'].iloc[-1]).strftime('%Y-%m-%d')
+    print(f"✅ {stock_id} 補抓到最舊資料，區間 {fetch_start} ~ {hist_end_date}")
+
+    return f"✅ {stock_id} 資料處理完成（已補抓舊資料）"
+
+
 # 🎯 多執行緒跑起來
 with ThreadPoolExecutor(max_workers=16) as executor:
     futures = {executor.submit(fetch_and_process_stock, int(sid)): int(sid) for sid in all_stock_ids}
@@ -170,12 +267,25 @@ with ThreadPoolExecutor(max_workers=16) as executor:
         result = future.result()
         print(result)
 
+with ThreadPoolExecutor(max_workers=16) as executor:
+    futures = {executor.submit(fetch_and_process_stock_early, int(sid)): int(sid) for sid in all_stock_ids}
+    for future in tqdm(as_completed(futures), total=len(futures)):
+        result = future.result()
+        print(result)
+    
+    
+
+
 
 
 # ✅ 到這裡就可以接下來做指標運算囉～
 print("🎉 所有股票歷史收盤價抓取完成，可通知資料庫開始特徵運算了喵♡")
 # ✅ 到這裡就可以接下來做指標運算囉～
 print("🎉 所有股票歷史收盤價抓取完成，可通知資料庫開始特徵運算了喵♡")
+
+#暫存cache to .csv
+# cached_rows_df = pd.DataFrame(cached_rows, columns=['stock_id', 'dt', 'open_p', 'high_p', 'low_p', 'close_p', 'adj_close', 'volume'])
+# cached_rows_df.to_csv("cached_stock_data.csv", index=False)
 
 import io
 

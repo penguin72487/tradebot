@@ -30,7 +30,8 @@ log = logging.getLogger()
 # GA_SCRIPT = "GaFeatureStrategyMutiModel.py"
 # GA_SCRIPT = "GaFeatureStrategyMutiModelEX.py"  # 遺傳演算法策略腳本
 # GA_SCRIPT = "GaFeatureStrategyRidge.py"  # 遺傳演算法策略腳本
-GA_SCRIPT = "GaFeatureStrategyRidgeEX.py"  # 遺傳演算法策略腳本
+# GA_SCRIPT = "GaFeatureStrategyRidgeEX.py"  # 遺傳演算法策略腳本
+GA_SCRIPT = "GaFeatureStrategyRidgeEXDB.py"  # 遺傳演算法策略腳本
 FETCH_SCRIPTS = ["fetch_yahoo_to_DB.py"]
 
 # 💤 休息時間區段（不執行任何任務）

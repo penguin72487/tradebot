@@ -129,7 +129,8 @@ df.to_csv(os.path.join(result_dir, "DB_financial_features.csv"), index=False, en
 # ========= 基礎前處理 =========
 # df['year_month'] = df['year_month'].astype(str)
 # df['year'] = df['year_month'].str[:4].astype(int)
-df['current_return'] = df['return'].shift(1)
+# df['current_return'] = df['return'].shift(1)
+df['return'] = df['current_return'].shift(-1)
 # Safely label previous return; treat NaN/None as 0 (neutral)
 df['current_return_label'] = df['current_return'].apply(
     lambda x: 1 if (pd.notna(x) and x > 0) else (-1 if (pd.notna(x) and x < 0) else 0)

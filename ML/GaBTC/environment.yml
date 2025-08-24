@@ -1,0 +1,32 @@
+name: trading_313
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.8    # CUDA Runtime；跟你的驅動對應
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - tqdm
+  - psycopg2
+  - ta-lib
+  - python-dotenv
+  - psutil
+  - datetime
+  - joblib
+  - subprocess
+  - logging
+  - pip:
+      - yfinance
+      - pandas-ta
+      - tqdm_joblib
+      - pybit
+# 可選：想用 CuPy 再加（可能與 CUDA 版本有相依，先確定再加）
+#  - cupy

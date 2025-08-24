@@ -201,5 +201,6 @@ AIFinTech/Final/results_EX_ga_roll_year/ckpt/*
 AIFinTech/Final/results_ga_roll_year/ckpt/*
 AIFinTech/Final/last_fetch_date.txt
 AIFinTech/Final/results_EX_DB_ga_roll_year/ckpt/*
-
 ML/GaBTC/result/*
+ML/GaBTC/result_bybit/*
+ML/GaBTC/last_fetch_date.txt

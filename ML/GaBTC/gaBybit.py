@@ -28,7 +28,7 @@ os.environ.setdefault("GABTC_DEBUG_CPU", "0")
 # 讀取檔案
 file_path = os.path.join(os.path.dirname(__file__), 'BITSTAMP_BTCUSD, 240.csv')
 base_dir = os.path.dirname(file_path)
-result_path = os.path.join(base_dir, 'result')
+result_path = os.path.join(base_dir, 'result_bybit')
 os.makedirs(result_path, exist_ok=True)
 log_path = os.path.join(base_dir, 'log')
 os.makedirs(log_path, exist_ok=True)
@@ -46,8 +46,8 @@ logging.basicConfig(
 )
 logging.info(f"Starting gaBTC with file: {file_path}")
 
-scaled_parquet = os.path.join(result_path, 'gaBTC_scaled.parquet')
-scaled_csv     = os.path.join(result_path, 'gaBTC_scaled.csv')
+scaled_parquet = os.path.join(result_path, 'features_bybit_perpetual_BTCUSDT_240.parquet')
+scaled_csv     = os.path.join(result_path, 'features_bybit_perpetual_BTCUSDT_240.csv')
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = False
 
@@ -340,50 +340,6 @@ def _ensure_cuda_f32_contig(x, device):
 
 
 @torch.no_grad()
-def eval_fitness(pop):
-    # 你的 decode/pop->weights, X 的取得維持原狀
-    # 假設：
-    #   X: [T, F]
-    #   pop: [pop, F]
-    # 下面只改 matmul 前後流程
-    device = torch.device('cuda' if (torch.cuda.is_available() and os.getenv("GABTC_DEBUG_CPU") != '1') else 'cpu')
-
-    # 使用在程式其他處定義的 X 與傳入的 pop（weights）
-    X_dev      = _ensure_cuda_f32_contig(X, device)
-    W_dev      = _ensure_cuda_f32_contig(pop, device)
-
-    # 形狀/contiguity 健檢（會給出更準確的報錯點）
-    m, k = X_dev.shape
-    n, k2 = W_dev.shape
-    assert k == k2, f"Shape mismatch: X={tuple(X_dev.shape)}, W={tuple(W_dev.shape)}"
-    if (torch.isnan(X_dev).any() or torch.isnan(W_dev).any() or
-        torch.isinf(X_dev).any() or torch.isinf(W_dev).any()):
-        raise ValueError("NaN/Inf detected in X or W before matmul")
-
-    # ⚠️ 有些驚奇的驅動/版本在 k==0（0 特徵）時會讓 cuBLAS 掉坑，手動處理掉
-    if k == 0 or n == 0 or m == 0:
-        return torch.zeros((m, n), device=device, dtype=torch.float32)
-
-    # 分塊 matmul，避免一次產生超大 [T, pop] 輸出矩陣造成 workspace/fragmentation 問題
-    # 你可以把 512 調成 256/1024 視 GPU 記憶體而定
-    CHUNK = 512
-    outs = []
-    for i in range(0, n, CHUNK):
-        subW = W_dev[i:i+CHUNK]                   # [chunk, F]
-        # 保險起見再確保連續
-        if not subW.is_contiguous():
-            subW = subW.contiguous()
-        sub = X_dev @ subW.t()                    # [T, chunk]
-        outs.append(sub)
-    raw = torch.cat(outs, dim=1)                  # [T, pop]
-
-    # 最後再檢查一次，避免後續操作擴散 NaN
-    if not torch.isfinite(raw).all():
-        raise ValueError("Non-finite detected in raw after matmul")
-
-    return raw
-
-@torch.no_grad()
 def mutate(children, mut_sigma, mask=None):
     # 避免對奇怪的 view 做 in-place，先複製成連續區塊
     if not children.is_contiguous():
@@ -586,7 +542,7 @@ import random
 
 checkpoint_dir = os.path.join(result_path, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
-checkpoint_path = os.path.join(checkpoint_dir, f'ga_{fitness_mode}.pt')
+checkpoint_path = os.path.join(checkpoint_dir, f'ga_{fitness_mode}_pop{pop_size}.pt')
 
 # 每隔多少代存一次；依你的 generations 調整
 checkpoint_every = 500

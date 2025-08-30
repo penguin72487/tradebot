@@ -18,8 +18,21 @@ from pybit.unified_trading import HTTP
 EXCHANGE = "bybit"
 PRODUCT  = "perpetual"   # 你的表用語：spot/future/perpetual
 SYMBOL   = "BTCUSDT"
-INTERVAL = "240"         # Bybit 的 240 = 4h
-INTERVAL_MS = 240 * 60 * 1000
+INTERVAL = "240"          # Bybit 的 1 = 1 minute
+
+def interval_to_ms(interval: str) -> int:
+    s = interval.upper()
+    if s.isdigit():
+        return int(s) * 60 * 1000
+    if s == "D":
+        return 24 * 60 * 60 * 1000
+    if s == "W":
+        return 7 * 24 * 60 * 60 * 1000
+    if s == "M":
+        return 30 * 24 * 60 * 60 * 1000
+    raise ValueError(f"Unsupported interval: {interval}")
+
+INTERVAL_MS = interval_to_ms(INTERVAL)
 
 # ========= DB 連線 =========
 load_dotenv()

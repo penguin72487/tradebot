@@ -204,3 +204,4 @@ AIFinTech/Final/results_EX_DB_ga_roll_year/ckpt/*
 ML/GaBTC/result/*
 ML/GaBTC/result_bybit/*
 ML/GaBTC/last_fetch_date.txt
+ML/GaBTC/result_live_bybit/*

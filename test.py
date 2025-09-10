@@ -1,11 +1,11 @@
-import torch
-
-# 檢查 CUDA 是否可用
-print("CUDA Available:", torch.cuda.is_available())
-
-# 如果 CUDA 可用，則打印出當前使用的 GPU 裝置
+import torch, torchvision, time
+print("torch:", torch.__version__, "cuda:", torch.version.cuda, "torchvision:", torchvision.__version__)
+print("CUDA available:", torch.cuda.is_available())
 if torch.cuda.is_available():
-    print("Current CUDA Device:", torch.cuda.current_device())
-    print("Device Name:", torch.cuda.get_device_name(torch.cuda.current_device()))
-else:
-    print("CUDA is not available, running on CPU")
+    print("Device:", torch.cuda.get_device_name(0))
+    x = torch.randn(8192, 8192, device="cuda")
+    torch.cuda.synchronize()
+    t0 = time.time()
+    y = x @ x
+    torch.cuda.synchronize()
+    print("mm(8192) time(s):", time.time() - t0)

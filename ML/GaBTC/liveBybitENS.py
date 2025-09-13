@@ -47,7 +47,7 @@ print("PyTorch:", torch.__version__)
 print("CUDA:", torch.version.cuda)
 # ========== 參數 ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULT_DIR = os.path.join(BASE_DIR, "result_live_bybit"); os.makedirs(RESULT_DIR, exist_ok=True)
+RESULT_DIR = os.path.join(BASE_DIR, "result_live_bybit_ENS"); os.makedirs(RESULT_DIR, exist_ok=True)
 RESULT_PNG_DIR = os.path.join(RESULT_DIR, "png"); os.makedirs(RESULT_PNG_DIR, exist_ok=True)
 FEATURE_PARQUET = os.path.join(RESULT_DIR, "features_240m.parquet")
 # --------- 精簡 checkpoint（每窗一檔；只存 elites + seeds） ----------
@@ -74,10 +74,9 @@ GENS         = 2**13     # 單次/續訓要跑的 GA 代數；初次建議設較
 AT_LEAST_IMPROVE = 2    # 是否至少要有提升才存模型（避免退步）
 EARLY_STOP_PATIENCE = 500  # 若超過這麼多代沒提升就提前停止（避免無謂計算）
 # 特徵工程設定
-STD_WIN = 365*6                 # 滾動標準化視窗 (16384)
+STD_WIN = 2**13                 # 滾動標準化視窗 (16384)
 change_rate_steps = 6           # 1~6次變化率
 MIN_HISTORY = 1024+STD_WIN + 1               # 至少這麼多列才開始訓練
-
 
 # GA 參數
 POP_SIZE = 2**13            # 1024
@@ -91,25 +90,34 @@ MAX_LEV = 1               # 槓桿上限
 FEE = 0.00055                 # 單邊費（含滑點）
 SEED = 42
 np.random.seed(SEED)
-
-# ---- Soft penalties（預設全 0；開了就會「減分」，以軟性方式控幅）----
-W_L2_PENALTY       = 1e-3   # 建議起點：1e-4 ~ 1e-3
-POS_L1_PENALTY     = 0.0   # 對平均倉位絕對值做懲罰，抑制過度曝險；建議 1e-3 ~ 1e-2
-TURNOVER_PENALTY   = 0.0   # 對換手(Δpos)做懲罰，抑制交易過度頻繁；建議與 FEE 同量級
-SPARSITY_PENALTY   = 0.0   # 對使用特徵比例做懲罰，鼓勵稀疏；建議 1e-3
-
 # === NEW: GA gene bounds (apply to W & L) ===
 GA_MIN, GA_MAX = -1.0, 1.0
 # --- Gene → Parameter decode (single source of truth) ---
 # W 的實際取值落在 [GA_MIN, GA_MAX]（例如 [-1, 1]）
 # L 的實際取值落在 [0, MAX_LEV]
 W_LO, W_HI = float(GA_MIN), float(GA_MAX)
-def decode_W(W_gene: torch.Tensor):
+L_LO, L_HI = 0.0, float(MAX_LEV)
+
+def decode_genes(W_gene: torch.Tensor, L_gene: torch.Tensor):
     """
-    將 W 基因（∈[0,1]）線性內插到實際參數空間 [-1, 1]。
-    支援 W_gene 形狀：(pop,D) 或 (D,)
+    將基因（W_gene, L_gene ∈ [0,1]）線性內插到實際參數空間。
+    支援張量批次形狀：
+      - W_gene: (pop, D) 或 (D,)
+      - L_gene: (pop,) 或 ()
+    回傳對應形狀的 (W_eff, L_eff)。
     """
-    return W_LO + W_gene * (W_HI - W_LO)
+    W_eff = W_LO + W_gene * (W_HI - W_LO)
+    L_eff = L_LO + L_gene * (L_HI - L_LO)
+    return W_eff, L_eff
+
+def decode_genes_if_needed(W_like: torch.Tensor, L_like: torch.Tensor):
+    """
+    向後相容：如果載入的 W 看起來已是「已解碼」（包含負值），就直接原樣返回；
+    若全部在 [0,1]，判定為基因，才做 decode。
+    """
+    eps = 1e-6
+    is_gene = (W_like.min() >= -eps) and (W_like.max() <= 1.0 + eps)
+    return decode_genes(W_like, L_like) if is_gene else (W_like, L_like)
 
 # === 新增：Mask（特徵開關）的突變率 ===
 MUT_RATE_MASK = 0.05   # bit-flip 機率；可調 0.02~0.15
@@ -689,9 +697,14 @@ def plot_equity(eq_np: np.ndarray, bh_np: np.ndarray, title: str, save_path: str
     plt.close()
 
 
+
 @torch.no_grad()
-def eval_model_range_gpu(w_vec: torch.Tensor, m_vec: torch.Tensor,
+def eval_model_range_gpu(w_vec: torch.Tensor, l_scalar: torch.Tensor, m_vec: torch.Tensor,
                          start_idx: int, end_idx: int):
+    """
+    用單一模型 (w,l,m) 在 [start_idx, end_idx) 做前推回測（全 GPU）
+    回傳: eq_np, bh_np, sharpe
+    """
     if end_idx <= start_idx:
         return np.array([]), np.array([]), float("nan")
 
@@ -699,36 +712,43 @@ def eval_model_range_gpu(w_vec: torch.Tensor, m_vec: torch.Tensor,
     y = y_all_t[start_idx:end_idx]   # (T,)
 
     with torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP):
-        w_eff = decode_W(w_vec)
-        m_bin = gate_mask(m_vec)
-        dot = (X.float() @ (w_eff * m_bin).float())   # (T,)
-        denom = m_bin.sum().clamp_min(1.0)
-        pos = (dot / denom).to(X.dtype)
-        # pos = pos.clamp(-100.0, 100.0)   # 保護
-
+        w_eff, l_eff = decode_genes_if_needed(w_vec, l_scalar)
+        m_bin = gate_mask(m_vec)                             # (D,) ∈ {0,1}
+        dot = (X.float() @ (w_eff * m_bin).float())    # (T,)
+        denom = torch.clamp(m_bin.sum(), min=1.0)
+        pos = (dot * l_eff).to(X.dtype) / denom
     prev = torch.cat([torch.zeros(1, device=device), pos[:-1]])
-    rets32 = (pos * y - float(FEE) * (pos - prev).abs()).float()
-    score = float(compute_fitness(rets32).squeeze().item())
+    rets = pos * y - float(FEE) * (pos - prev).abs()
+    rets32 = rets.float()
+    eq = torch.cumsum(torch.log1p(rets32), dim=0).exp()
+
+
+    rets32 = rets.float()
+    score = float(compute_fitness(rets32).squeeze().item())  # 用同一套規則算分數
     eq = torch.cumsum(torch.log1p(torch.clamp(rets32, min=-0.999999)), dim=0).exp()
     bh = torch.cumsum(torch.log1p(y.float()), dim=0).exp()
     return eq.detach().cpu().numpy(), bh.detach().cpu().numpy(), score
 
-def plot_oos_for_window(best_w_np: np.ndarray, best_m_np: np.ndarray,
+
+def plot_oos_for_window(best_w_np: np.ndarray, best_l: float, best_m_np: np.ndarray,
                         train_end_idx: int, window_label: str):
     start_idx = train_end_idx + 1
     end_idx   = len(df)
     if start_idx >= end_idx:
         return
+
     w_vec = torch.from_numpy(best_w_np).to(device=device, dtype=torch.float32)
+    l_scalar = torch.tensor(best_l, device=device, dtype=torch.float32)
     m_vec = torch.from_numpy(best_m_np).to(device=device, dtype=torch.float32)
-    eq_np, bh_np, oos_score = eval_model_range_gpu(w_vec, m_vec, start_idx, end_idx)
+
+    eq_np, bh_np, oos_score = eval_model_range_gpu(w_vec, l_scalar, m_vec, start_idx, end_idx)
+
     oos_dir = os.path.join(RESULT_DIR, "oos_plots"); os.makedirs(oos_dir, exist_ok=True)
     tail_ts = ts_idx[end_idx-1].strftime("%Y%m%d_%H%M")
     save_png = os.path.join(oos_dir, f"oos_{window_label}_to_{tail_ts}.png")
     title = f"[OOS {ts_idx[start_idx].strftime('%Y-%m-%d %H:%M')} → {ts_idx[end_idx-1].strftime('%Y-%m-%d %H:%M')}] {fitness_metric}={oos_score:.3f}"
     plot_equity(eq_np, bh_np, title, save_png)
     logging.info(f"OOS plot saved: {save_png}")
-
 
 
 # ===== 背景 I/O：非同步存檔與存圖 =====
@@ -762,48 +782,41 @@ atexit.register(_io_shutdown)
 
 # --------- 核心：整群評分（Sharpe, 年化） ----------
 # 把「圖內」與「圖外」分開：圖內不做 .item()、不組 dict
-def _evaluate_population_cuda_core(W: torch.Tensor, M: torch.Tensor,
+def _evaluate_population_cuda_core(W: torch.Tensor, L: torch.Tensor, M: torch.Tensor,
                                    X: torch.Tensor, y: torch.Tensor):
+    """
+    回傳:
+      fitness: (pop,) Tensor
+      best_idx: int
+      eq_best_np: numpy.ndarray (CPU)
+      stats_best: dict{sharpe, mean, std, last_pos}
+    """
     ctx = torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP)
     with ctx:
-        W_eff = decode_W(W)
+        # 基因就 decode，已解碼就原樣
+        W_eff, L_eff = decode_genes_if_needed(W, L)
         M_bin = gate_mask(M)                                   # (pop,D) ∈ {0,1}
 
+        # 用 float32 做點積，避免 FP16 溢位
         WT_masked = (W_eff * M_bin).t()
-        dot = (X.float() @ WT_masked.float())                  # (T, pop)
+        dot = (X.float() @ WT_masked.float())            # (T, pop)
         denom = torch.clamp(M_bin.sum(dim=1, keepdim=True).t(), min=1.0)  # (1, pop)
-        pos = (dot / denom).to(X.dtype)
+        pos = (dot * L_eff).to(X.dtype) / denom
 
         prev = torch.zeros((1, pos.shape[1]), device=device, dtype=pos.dtype)
         delta_pos = pos - torch.cat([prev, pos[:-1, :]], dim=0)
         costs = float(FEE) * delta_pos.abs()
 
-        rets = pos * y.unsqueeze(1) - costs
+        # 明確廣播 y → (T,1)
+        rets = pos * y.unsqueeze(1) - costs              # (T, pop)
 
     rets32 = rets.float()
     mu = rets32.mean(dim=0)
     sd = rets32.std(dim=0, unbiased=False).clamp_min(1e-12)
-    fit_base = compute_fitness(rets32)                         # (pop,)
-
-    # ===== Soft penalties（軟性，保留原味，不做 clamp）=====
-    pen = torch.zeros_like(fit_base)
-
-    if W_L2_PENALTY > 0:
-        pen = pen + W_L2_PENALTY * (W.pow(2).mean(dim=1))     # 對「基因本身」做 L2（不影響輸出檔）
-
-    if POS_L1_PENALTY > 0:
-        pen = pen + POS_L1_PENALTY * (pos.abs().mean(dim=0))  # 控制平均曝險
-
-    if TURNOVER_PENALTY > 0:
-        pen = pen + TURNOVER_PENALTY * (delta_pos.abs().mean(dim=0))  # 控制換手
-
-    if SPARSITY_PENALTY > 0:
-        pen = pen + SPARSITY_PENALTY * (M_bin.mean(dim=1))    # 鼓勵少用特徵（可提升泛化）
-
-    fitness = fit_base - pen
+    fitness = compute_fitness(rets32)
 
     best_idx = int(torch.argmax(fitness).item())
-    eq_best = torch.cumsum(torch.log1p(rets32[:, best_idx]), dim=0).exp()
+    eq_best = torch.cumsum(torch.log1p(rets32[:, best_idx]), dim=0).exp()  # (T,)
     eq_best_np = eq_best.detach().cpu().numpy()
 
     stats_best = dict(
@@ -815,15 +828,21 @@ def _evaluate_population_cuda_core(W: torch.Tensor, M: torch.Tensor,
     return fitness, best_idx, eq_best_np, stats_best
 
 
+
+
 def init_population(pop_size: int, D: int):
     """
     回傳：
-      W: (pop, D) 連續基因 ∈ [0,1] → decode → [-1,1]
-      M: (pop, D) 連續基因 ∈ [0,1] → gate   → {0,1}
+      W: (pop, D) 連續基因 ∈ [0,1]  → decode → [-1,1]
+      L: (pop,)   連續基因 ∈ [0,1]  → decode → [0, MAX_LEV]
+      M: (pop, D) 連續基因 ∈ [0,1]  → gate   → {0,1}（>0.5 視為使用）
     """
     W = torch.empty((pop_size, D), device=device, dtype=torch.float32).uniform_(0.0, 1.0)
+    L = torch.empty((pop_size,),    device=device, dtype=torch.float32).uniform_(0.0, 1.0)
+    # 初始 Mask：0/1 大致各半
     M = torch.empty((pop_size, D), device=device, dtype=torch.float32).uniform_(0.0, 1.0)
-    return W, M
+    return W, L, M
+
 
 
 def tournament_select_indices(fitness: torch.Tensor, needed: int, k: int = 3) -> torch.Tensor:
@@ -833,36 +852,44 @@ def tournament_select_indices(fitness: torch.Tensor, needed: int, k: int = 3) ->
     winners = cand.gather(1, cand_fit.argmax(dim=1, keepdim=True)).squeeze(1)   # (needed,)
     return winners
 
-def produce_children(W: torch.Tensor, M: torch.Tensor,
+def produce_children(W: torch.Tensor, L: torch.Tensor, M: torch.Tensor,
                      fitness: torch.Tensor, elites: int):
     pop, D = W.shape
     elite_idx = torch.topk(fitness, k=elites, largest=True).indices
-    W_e, M_e = W[elite_idx].clone(), M[elite_idx].clone()
+    W_e, L_e, M_e = W[elite_idx].clone(), L[elite_idx].clone(), M[elite_idx].clone()
 
     needed = pop - elites
     p1 = tournament_select_indices(fitness, needed, k=3)
     p2 = tournament_select_indices(fitness, needed, k=3)
 
-    # 連續基因：線性混合（不 clamp，保留原味）
+    # 連續基因使用 BLX/線性混合
     alpha = torch.empty((needed, 1), device=device).uniform_(0.2, 0.8)
     W_c = alpha * W[p1] + (1 - alpha) * W[p2]
+    L_c = alpha.squeeze(1) * L[p1] + (1 - alpha.squeeze(1)) * L[p2]
 
-    # Mask：均勻交叉 + bit-flip（不 clamp，保留原味）
+    # Mask 使用「逐特徵均勻交叉」（0.5 機率取父一或父二的位）
     take_from_p1 = (torch.rand((needed, D), device=device) < 0.5).to(torch.float32)
     M_c = take_from_p1 * M[p1] + (1 - take_from_p1) * M[p2]
 
-    # 變異：加噪音／翻轉（不 clamp）
+    # 變異：
+    # 1) W/L 加高斯噪音後 clip 至 [0,1]
     mut_mask_col = (torch.rand(needed, 1, device=device) < float(MUT_RATE))
     noise_w = torch.normal(0.0, float(MUT_SIGMA), size=W_c.shape, device=device)
     W_c = W_c + mut_mask_col.to(W_c.dtype) * noise_w
+    mut_mask_1d = mut_mask_col.squeeze(1)
+    noise_l = torch.normal(0.0, float(MUT_SIGMA), size=L_c.shape, device=device)
+    L_c = L_c + mut_mask_1d.to(L_c.dtype) * noise_l
+    W_c.clamp_(0.0, 1.0)
+    L_c.clamp_(0.0, 1.0)
 
+    # 2) M 用 bit-flip（0 ↔ 1）：先用連續空間承載，再翻轉
     flip = (torch.rand((needed, D), device=device) < float(MUT_RATE_MASK))
-    M_c = torch.where(flip, 1.0 - M_c, M_c)
+    M_c = torch.where(flip, 1.0 - M_c, M_c).clamp_(0.0, 1.0)
 
     W_new = torch.cat([W_e, W_c], dim=0)
+    L_new = torch.cat([L_e, L_c], dim=0)
     M_new = torch.cat([M_e, M_c], dim=0)
-    return W_new, M_new
-
+    return W_new, L_new, M_new
 
 
 # --- torch.compile 加速（Inductor）---
@@ -897,13 +924,111 @@ if USE_TORCH_COMPILE:
 
 
 # --------- CUDA 版 GA 訓練單窗 ----------
+def train_sparse_linear_cuda(
+    X_t: torch.Tensor,
+    y_t: torch.Tensor,
+    steps: int,
+    window_label: str,
+    *,
+    lr: float = 3e-3,
+    l1_gate: float = 1e-3,     # 稀疏度強度：越大越少特徵
+    l2_w: float = 1e-5,        # 權重 L2 正則
+    temp: float = 1.0,         # gate 的溫度（可逐步降低）
+    seed_prev: dict | None = None
+):
+    T, D = X_t.shape
+    # 參數：w_param（無界）→ w = tanh(w_param) ∈ [-1,1]
+    #       l_param（無界）→ l = sigmoid(l_param)*MAX_LEV ∈ [0, MAX_LEV]
+    #       m_logit（無界）→ m = sigmoid(m_logit) ∈ (0,1)
+    w_param  = torch.zeros(D, device=device, dtype=torch.float32, requires_grad=True)
+    l_param  = torch.zeros(1, device=device, dtype=torch.float32, requires_grad=True)
+    m_logit  = torch.zeros(D, device=device, dtype=torch.float32, requires_grad=True)
+
+    # 暖機：上一窗解
+    if seed_prev and all(k in seed_prev for k in ("w","l","m")):
+        with torch.no_grad():
+            w_param.copy_(torch.atanh(torch.clamp(torch.as_tensor(seed_prev["w"], device=device), -0.999, 0.999)))
+            l_param.copy_(torch.logit(torch.clamp(torch.tensor(seed_prev["l"], device=device), 1e-4, 1-1e-4)))
+            m_init = torch.as_tensor(seed_prev["m"], device=device)
+            m_logit.copy_(torch.logit(torch.clamp(m_init, 1e-3, 1-1e-3)))
+
+    opt = torch.optim.AdamW([w_param, l_param, m_logit], lr=lr)
+    best = (-1e18, None)  # (score, pack)
+    bh_np = torch.cumsum(torch.log1p(y_t.float()), dim=0).exp().detach().cpu().numpy()
+
+    for step in range(1, steps+1):
+        with torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP):
+            w = torch.tanh(w_param)                      # [-1,1]
+            l = torch.sigmoid(l_param).squeeze(0) * L_HI # [0,MAX_LEV]
+            m = torch.sigmoid(m_logit / temp)            # (D,)
+
+            dot = (X_t.float() @ (w * m).float())        # (T,)
+            denom = torch.clamp(m.sum(), min=1.0)
+            pos = (dot * l).to(X_t.dtype) / denom
+
+            prev = torch.cat([torch.zeros(1, device=device, dtype=pos.dtype), pos[:-1]])
+            # 平滑交易成本
+            costs = float(FEE) * torch.sqrt((pos - prev).float().pow(2) + 1e-8)
+            rets = pos * y_t - costs                     # (T,)
+
+            # 目標：Sharpe 或 幾何報酬
+            if fitness_metric.lower() == "sharpe":
+                r = rets.float()
+                mu = r.mean()
+                sd = r.std(unbiased=False).clamp_min(1e-12)
+                score = (mu / sd) * float(ANN_FACTOR)
+                loss_main = -score
+            else:
+                r = torch.clamp(rets.float(), min=-0.999999)
+                score = torch.log1p(r).sum()
+                loss_main = -score
+
+            # 稀疏與權重正則
+            loss_sparse = l1_gate * m.mean() + l2_w * (w.pow(2).mean())
+
+            loss = loss_main + loss_sparse
+
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        [w_param, l_param, m_logit]
+        opt.step()
+
+        # 保存最佳（評分用同一套 compute_fitness）
+        with torch.no_grad():
+            w_eff = (w * m).detach()
+            l_eff = l.detach()
+            m_bin = (m > 0.5).float()
+            fit, idx, eq_best_np, stats = _evaluate_population_cuda_core(
+                w_eff, l_eff, m_bin, X_t, y_t
+            )
+            cur = float(fit[0].item())
+            if cur > best[0] + IMPROVE_DELTA:
+                best = (cur, {
+                    "best_weights": w.detach().cpu().numpy().astype(np.float32),
+                    "best_leverage": float(l_eff.item() / L_HI),  # 注意：回傳的是 gene 空間 or 實際值；你目前下游用 gene 在 decode，保持一致的話回 0~1
+                    "best_mask": m_bin.detach().cpu().numpy().astype(np.float32),
+                    "best_stats": stats,
+                    "history": [],
+                    "last_gen": step
+                })
+                save_dir = os.path.join(RESULT_PNG_DIR, f"{window_label}"); os.makedirs(save_dir, exist_ok=True)
+                save_png = os.path.join(save_dir, f"{window_label}_L0opt_step{step:05d}.png")
+                plot_equity(eq_best_np, bh_np, f"[{window_label}][L0-Opt] step {step} | {fitness_metric}={cur:.3f}", save_png)
+
+        # 溫度/學習率退火（可選）
+        if step % 2000 == 0:
+            temp = max(0.5, temp * 0.9)
+
+    return best[1]
+
+@torch.no_grad()
 def ga_train_one_window_cuda(
     X_t: torch.Tensor,
     y_t: torch.Tensor,
     gens: int,
     window_label: str,
-    warm_start: dict | None = None,   # {"W": np.ndarray, "M": np.ndarray}
-    seed_prev: dict | None = None,    # {"w": np.ndarray, "m": np.ndarray}
+    warm_start: dict | None = None,
+    seed_prev: dict | None = None,   # {"w": np.ndarray, "l": float, "m": np.ndarray}
 ):
     T, D = X_t.shape
     pop = POP_SIZE
@@ -911,29 +1036,36 @@ def ga_train_one_window_cuda(
 
     resumed = load_checkpoint_slim(window_label, pop=pop, D=D)
     if resumed:
-        W = resumed["W"]; M = resumed["M"]
+        W = resumed["W"]; L = resumed["L"]; M = resumed["M"]
         start_gen = resumed["start_gen"]
         prev_best = resumed["prev_best"]
         logging.info(f"[{window_label}] resume from slim ckpt @ gen {start_gen-1}, best={prev_best:.4f}")
     else:
-        if warm_start and all(k in warm_start for k in ("W","M")):
+        if warm_start and all(k in warm_start for k in ("W","L","M")):
             W = torch.as_tensor(warm_start["W"], device=device, dtype=torch.float32).view(pop, D).clone()
+            L = torch.as_tensor(warm_start["L"], device=device, dtype=torch.float32).view(pop).clone()
             M = torch.as_tensor(warm_start["M"], device=device, dtype=torch.float32).view(pop, D).clone()
             if W.shape != (pop, D) or M.shape != (pop, D):
-                W, M = init_population(pop, D)
+                W, L, M = init_population(pop, D)
         else:
-            W, M = init_population(pop, D)
+            W, L, M = init_population(pop, D)
         start_gen = 1
         prev_best = -1e12
 
     # 跨窗種子（只有在沒有 warm-start 時才用）
-    if warm_start is None and seed_prev and all(k in seed_prev for k in ("w","m")):
+    if warm_start is None and seed_prev and all(k in seed_prev for k in ("w","l","m")):
         prev_w = torch.as_tensor(seed_prev["w"], device=device, dtype=torch.float32).view(1, D)
+        prev_l = torch.tensor(float(seed_prev["l"]), device=device, dtype=torch.float32).view(1)
         prev_m = torch.as_tensor(seed_prev["m"], device=device, dtype=torch.float32).view(1, D)
         k_seed = max(2, pop // 64)
         noise_w = torch.normal(0.0, 0.005, size=(k_seed, D), device=device)
+        noise_l = torch.normal(0.0, 0.02,  size=(k_seed,),    device=device)
+        # noise_m = torch.normal(0.0, 0.02, size=(k_seed, D), device=device)
+
+        # M：少量 bit flip
         flip = (torch.rand((k_seed, D), device=device) < 0.02)
         W[:k_seed] = (prev_w + noise_w)
+        L[:k_seed] = (prev_l + noise_l)
         M_seed = prev_m.repeat(k_seed, 1)
         M[:k_seed] = torch.where(flip, 1.0 - M_seed, M_seed)
         logging.info(f"[{window_label}] seeded {k_seed} from previous best.")
@@ -945,11 +1077,13 @@ def ga_train_one_window_cuda(
     improved_gens = 0
 
     for gen in range(start_gen, gens + 1):
+
+
         if no_improve_gens >= EARLY_STOP_PATIENCE and improved_gens >= AT_LEAST_IMPROVE:
             logging.info(f"[{window_label}] early stopping at gen {gen-1} (no improvement for {no_improve_gens} gens).")
             break
 
-        fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, M, X_t, y_t)
+        fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, L, M, X_t, y_t)
         cur_best = float(fitness[best_idx].item())
         best_hist.append(cur_best)
 
@@ -960,29 +1094,29 @@ def ga_train_one_window_cuda(
             save_dir = os.path.join(RESULT_PNG_DIR, f"{window_label}"); os.makedirs(save_dir, exist_ok=True)
             save_png = os.path.join(save_dir, f"Final_{window_label}.png")
             plot_equity(eq_best_np, bh_np, f"[{window_label}] Gen {gen} | {fitness_metric}={cur_best:.3f}", save_png)
-            plot_equity(eq_best_np, bh_np, f"[{window_label}] Gen {gen} | {fitness_metric}={cur_best:.3f}", "Train_Progressing.png")
-
         else:
             no_improve_gens += 1
 
         if improved:
-            save_checkpoint_slim(window_label, gen, W, M, fitness, best_hist, pop, D)
+            save_checkpoint_slim(window_label, gen, W, L, M, fitness, best_hist, pop, D)
             prev_best = cur_best
             logging.info(f"[{window_label}] Gen {gen}/{gens} | {fitness_metric}={cur_best:.3f} (improved, ckpt saved)")
         elif gen % 100 == 0:
             logging.info(f"[{window_label}] Gen {gen}/{gens} | {fitness_metric}={cur_best:.3f}")
 
-        W, M = produce_children(W, M, fitness, elites)
+        W, L, M = produce_children(W, L, M, fitness, elites)
 
-    fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, M, X_t, y_t)
+    fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, L, M, X_t, y_t)
     best_w = W[best_idx].detach().cpu().numpy()
+    best_l = float(L[best_idx].item())
     best_m = gate_mask(M[best_idx]).detach().cpu().numpy()  # 存 0/1
 
-    save_checkpoint_slim(window_label, gens, W, M, fitness, best_hist, pop, D)
+    save_checkpoint_slim(window_label, gens, W, L, M, fitness, best_hist, pop, D)
 
     return {
-        "best_weights": best_w,     # 原味（0~1 基因）
-        "best_mask": best_m,        # 0/1
+        "best_weights": best_w,
+        "best_leverage": best_l,
+        "best_mask": best_m,
         "best_stats": best_stats,
         "history": best_hist,
         "last_gen": gens,
@@ -1006,16 +1140,19 @@ def save_archive(items: list):
 def _ckpt_path(window_label: str) -> str:
     safe_lbl = window_label.replace(":", "").replace("/", "_")
     return os.path.join(CKPT_DIR, f"ckpt_{safe_lbl}.pt")
+
 def save_checkpoint_slim(window_label: str, gen: int,
-                         W: torch.Tensor, M: torch.Tensor,
+                         W: torch.Tensor, L: torch.Tensor, M: torch.Tensor,
                          fitness: torch.Tensor, best_hist: list, pop: int, D: int):
     k_elite = min(CKPT_ELITES_MAX, max(8, int(ELITE_FRAC * pop)))
     elite_idx = torch.topk(fitness, k=k_elite, largest=True).indices
     W_e = W[elite_idx].detach().to("cpu", torch.float16)
+    L_e = L[elite_idx].detach().to("cpu", torch.float16)
     M_e = M[elite_idx].detach().to("cpu", torch.float16)
 
-    W_s, M_s = init_population(CKPT_SEEDS, D)
+    W_s, L_s, M_s = init_population(CKPT_SEEDS, D)
     W_s = W_s.detach().to("cpu", torch.float16)
+    L_s = L_s.detach().to("cpu", torch.float16)
     M_s = M_s.detach().to("cpu", torch.float16)
 
     ck = {
@@ -1024,8 +1161,10 @@ def save_checkpoint_slim(window_label: str, gen: int,
         "pop": int(pop),
         "D": int(D),
         "elite_W": W_e,
+        "elite_L": L_e,
         "elite_M": M_e,
         "seed_W": W_s,
+        "seed_L": L_s,
         "seed_M": M_s,
         "best_fitness": float(max(best_hist) if best_hist else -1e18),
     }
@@ -1037,38 +1176,46 @@ def load_checkpoint_slim(window_label: str, pop: int, D: int):
         return None
     ck = torch.load(p, map_location="cpu")
 
-    W_e = ck.get("elite_W"); M_e = ck.get("elite_M")
-    W_s = ck.get("seed_W");  M_s = ck.get("seed_M")
+    W_e = ck.get("elite_W"); L_e = ck.get("elite_L"); M_e = ck.get("elite_M")
+    W_s = ck.get("seed_W");  L_s = ck.get("seed_L");  M_s = ck.get("seed_M")
 
-    if W_e is None:
+    if W_e is None or L_e is None:
         return None
-    if M_e is None: M_e = torch.rand_like(W_e)
-    if W_s is None: W_s = torch.rand((CKPT_SEEDS, D), dtype=torch.float16)
-    if M_s is None: M_s = torch.rand_like(W_s)
+    # 向後相容：若舊檔沒有 M，就隨機補
+    if M_e is None:
+        M_e = torch.rand_like(W_e)
+    if W_s is None or L_s is None:
+        W_s, L_s, M_s = init_population(CKPT_SEEDS, D)
+        W_s = W_s.to("cpu", torch.float16); L_s = L_s.to("cpu", torch.float16); M_s = M_s.to("cpu", torch.float16)
+    if M_s is None:
+        M_s = torch.rand_like(W_s)
 
     W_e = W_e.to(torch.float32, copy=False).to(device)
+    L_e = L_e.to(torch.float32, copy=False).to(device)
     M_e = M_e.to(torch.float32, copy=False).to(device)
     W_s = W_s.to(torch.float32, copy=False).to(device)
+    L_s = L_s.to(torch.float32, copy=False).to(device)
     M_s = M_s.to(torch.float32, copy=False).to(device)
 
     k_e, k_s = W_e.shape[0], W_s.shape[0]
     W = torch.empty((pop, D), device=device, dtype=torch.float32)
+    L = torch.empty((pop,),    device=device, dtype=torch.float32)
     M = torch.empty((pop, D), device=device, dtype=torch.float32)
 
     take_e = min(k_e, pop)
-    W[:take_e] = W_e[:take_e]; M[:take_e] = M_e[:take_e]
+    W[:take_e] = W_e[:take_e]; L[:take_e] = L_e[:take_e]; M[:take_e] = M_e[:take_e]
     ptr = take_e
     if ptr < pop and k_s > 0:
         take_s = min(k_s, pop - ptr)
-        W[ptr:ptr+take_s] = W_s[:take_s]; M[ptr:ptr+take_s] = M_s[:take_s]
+        W[ptr:ptr+take_s] = W_s[:take_s]; L[ptr:ptr+take_s] = L_s[:take_s]; M[ptr:ptr+take_s] = M_s[:take_s]
         ptr += take_s
     if ptr < pop:
-        W_fill, M_fill = init_population(pop - ptr, D)
-        W[ptr:] = W_fill; M[ptr:] = M_fill
+        W_fill, L_fill, M_fill = init_population(pop - ptr, D)
+        W[ptr:] = W_fill; L[ptr:] = L_fill; M[ptr:] = M_fill
 
     start_gen = int(ck.get("gen", 0)) + 1
     prev_best = float(ck.get("best_fitness", -1e18))
-    return {"W": W, "M": M, "start_gen": start_gen, "prev_best": prev_best}
+    return {"W": W, "L": L, "M": M, "start_gen": start_gen, "prev_best": prev_best}
 
 def add_model_to_archive(train_end_ts, model_rec: dict):
     items = load_archive()
@@ -1076,6 +1223,7 @@ def add_model_to_archive(train_end_ts, model_rec: dict):
         "train_end": str(pd.Timestamp(train_end_ts).tz_convert("UTC")),
         "D": int(D),
         "weights_file": model_rec["weights_file"],  # .pt
+        "leverage": float(model_rec["leverage"]),
         "train_sharpe": float(model_rec["train_sharpe"]),
         "notes": model_rec.get("notes", "")
     })
@@ -1106,7 +1254,13 @@ def evaluate_archive_until_cuda(items: list, until_idx: int):
             ck = torch.load(wf, map_location="cpu")
             w = torch.as_tensor(ck["w"] if "w" in ck else ck["W"].numpy(), dtype=torch.float32, device=device).view(1, -1)
             l = torch.as_tensor(ck["l"] if "l" in ck else ck["L"].numpy(), dtype=torch.float32, device=device).view(1)
-            m = torch.as_tensor(ck["m"] if "m" in ck else ck["M"].numpy(), dtype=torch.float32, device=device).view(1, -1)
+            # 向後相容：沒有 m 就「全 1」
+            if "m" in ck:
+                m = torch.as_tensor(ck["m"], dtype=torch.float32, device=device).view(1, -1)
+            else:
+                m = torch.ones_like(w)
+            Ws.append(w); Ls.append(l); Ms.append(m); idx_map.append(i)
+
         W_stack = torch.cat(Ws, dim=0)
         L_stack = torch.cat(Ls, dim=0).squeeze(1)
         M_stack = torch.cat(Ms, dim=0)
@@ -1122,87 +1276,98 @@ def evaluate_archive_until_cuda(items: list, until_idx: int):
 # --------- 主迴圈（純 CUDA） ----------
 def run_ga_live():
     items = load_archive()
-    equity_live, bh_live = [1], [1]
+    equity_live, bh_live = [], []
     pos_prev = 0.0
-    prev_best_seed = None  # {"w":..., "m":...}
+
+    prev_best_seed = None  # ★ 新增：跨窗延續的種子
 
     start_bar = max(MIN_HISTORY, 2)
     for t in range(start_bar, len(df)):
-        train_end = t+STD_WIN
-        train_start = t
+        train_end = t - 1
+        train_start = 0  # 或者滑窗：max(0, t-1-STD_WIN)
 
-        X_train = X_all_t[train_start:train_end]
-        y_train = y_all_t[train_start:train_end]
+        X_train = X_all_t[train_start:train_end+1]
+        y_train = y_all_t[train_start:train_end+1]
 
         window_label = f"{ts_idx[train_start].strftime('%Y%m%d_%H%M')}-{ts_idx[train_end].strftime('%Y%m%d_%H%M')}"
 
+        # === 將「上一窗 elites」當作這一窗的 warm-start ===
         warm = None
-        if train_end - 1 > train_start:
+        if t - 1 > train_start:  # 確保有前一窗
             prev_end = train_end - 1
             prev_window_label = f"{ts_idx[train_start].strftime('%Y%m%d_%H%M')}-{ts_idx[prev_end].strftime('%Y%m%d_%H%M')}"
             prev_resume = load_checkpoint_slim(prev_window_label, pop=POP_SIZE, D=D)
             if prev_resume:
+                # 這裡的 W/L 已由上一窗 ckpt 的 elites + seeds 重建成完整人口
                 warm = {
                     "W": prev_resume["W"].detach().cpu().numpy(),
+                    "L": prev_resume["L"].detach().cpu().numpy(),
                     "M": prev_resume["M"].detach().cpu().numpy(),
                 }
                 logging.info(f"[{window_label}] warm-start from previous window elites: {prev_window_label}")
 
+
         gens = max(N_GEN_BASE, GENS)
-        rec = ga_train_one_window_cuda(
-            X_train, y_train, gens=gens, window_label=window_label,
-            warm_start=warm, seed_prev=prev_best_seed
+        # ★ 將上一窗最佳帶入這一窗
+        rec = train_sparse_linear_cuda(
+            X_train, y_train, steps=gens, window_label=window_label, seed_prev=prev_best_seed
         )
+
         best_w = rec["best_weights"]
+        best_l = float(rec["best_leverage"])
         best_m = rec["best_mask"]
         best_sharpe = float(rec["best_stats"]["sharpe"])
 
-        # OOS plot
-        plot_oos_for_window(best_w, best_m, train_end, window_label)
 
-        # 存權重（原味）
+        # ★ 每窗訓練完成就畫「從 train_end+1 到資料最新」的 OOS 表現
+        plot_oos_for_window(best_w, best_l, best_m, train_end, window_label)
+
+        # 存權重並加入名人堂
         weights_dir = os.path.join(RESULT_DIR, "weights"); os.makedirs(weights_dir, exist_ok=True)
         weights_file = os.path.join(weights_dir, f"weights_{ts_idx[train_end].strftime('%Y%m%d_%H%M')}.pt")
-        torch.save({"w": torch.from_numpy(best_w), "m": torch.from_numpy(best_m)}, weights_file)
+        torch.save({"w": torch.from_numpy(best_w), "l": torch.tensor(best_l, dtype=torch.float32),
+                    "m": torch.from_numpy(best_m)}, weights_file)
         add_model_to_archive(ts_idx[train_end], {
             "weights_file": weights_file,
+            "leverage": best_l,
             "train_sharpe": best_sharpe,
             "notes": f"window={window_label}"
         })
         items = load_archive()
 
-        prev_best_seed = {"w": best_w, "m": best_m}
+        prev_best_seed = {"w": best_w, "l": best_l, "m": best_m}
 
-        # ===== Live 推論（無槓桿）=====
+
+        # OOS 最佳模型（你原本 live 用的）
+        # best_w is the trained weight array (numpy); convert it directly to a CUDA tensor for live inference.
+        # best_w / best_l 是基因，先 decode
         use_w_gene = torch.from_numpy(best_w).to(device=device, dtype=torch.float32)
+        use_l_gene = torch.tensor(best_l, device=device, dtype=torch.float32)
         use_m_gene = torch.from_numpy(best_m).to(device=device, dtype=torch.float32)
-        use_w = decode_W(use_w_gene)
+
+        use_w, use_l = decode_genes_if_needed(use_w_gene, use_l_gene)
         use_m = gate_mask(use_m_gene)
 
         with torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP):
-            x_t = X_all_t[train_end+1:train_end+2]  # (1,D)
-            W_eff = use_w
-            M_bin = use_m
-            WT_masked = (W_eff * M_bin).t()                      # (D,)->(D,1) then transposed
-            dot = (x_t.float() @ WT_masked.float()).squeeze()    # scalar
-            denom = torch.clamp(M_bin.sum(), min=1.0)
-            pos_t = (dot / denom).to(x_t.dtype)
-            # pos_t = pos_t.clamp(-100.0, 100.0)   # optional cap
+            x_t = X_all_t[t:t+1]                                 # (1,D)
+            denom = torch.clamp(use_m.sum(), min=1.0)
+            dot = (x_t.float() @ (use_w * use_m).view(-1,1).float()).squeeze(1)  # (1,)
+            pos_t = (dot * use_l).to(x_t.dtype) / denom
 
-        ret_t = float(pos_t.item() * y_all_t[train_end+1].item() - float(FEE) * abs(float(pos_prev) - float(pos_t.item())))
+
+        ret_t = float(pos_t.item() * y_all_t[t].item() - float(FEE) * abs(float(pos_prev) - float(pos_t.item())))
         pos_prev = float(pos_t.item())
 
         equity_live.append((equity_live[-1] if equity_live else 1.0) * (1.0 + ret_t))
-        bh_live.append((bh_live[-1] if bh_live else 1.0) * (1.0 + float(y_all_t[train_end+1].item())))
+        bh_live.append((bh_live[-1] if bh_live else 1.0) * (1.0 + float(y_all_t[t].item())))
 
         live_png = os.path.join(RESULT_DIR, "live_equity.png")
-        plot_equity(np.array(equity_live, np.float64), np.array(bh_live, np.float64), f"Live up to {ts_idx[train_end+1]}", live_png)
-        logging.info(f"[{ts_idx[train_end+1]}] pos={pos_t.item():.3f} ret={ret_t:.6f} bh = {(bh_live[-1]/bh_live[-2])-1:.4f} eq={equity_live[-1]:.4f}")
+        plot_equity(np.array(equity_live, np.float64), np.array(bh_live, np.float64), f"Live up to {ts_idx[t]}", live_png)
+        logging.info(f"[{ts_idx[t]}] pos={pos_t.item():.3f} ret={ret_t:.6f} eq={equity_live[-1]:.4f}")
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
     logging.info("GA live run complete.")
-
 
 
 # 入口

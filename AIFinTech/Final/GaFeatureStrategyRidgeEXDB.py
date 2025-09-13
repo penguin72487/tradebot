@@ -7,6 +7,12 @@
 """
 
 import os
+# ---- BLAS/OMP safety on Windows ----
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import sys
 import time
 import warnings
@@ -31,12 +37,13 @@ from sklearn.linear_model import BayesianRidge, Ridge, LinearRegression
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 import xgboost as xgb
-import catboost as cb
+# import catboost as cb
 
 import psycopg2
 import psycopg2.extras
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
+
 
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -333,7 +340,6 @@ def cumulative_score(series_list):
 MODELS = {
     'BayesianRidge': BayesianRidge
 }
-
 PARAM_SPACES = {
     'BayesianRidge': {
         'max_iter'     : (100, 500),

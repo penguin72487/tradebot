@@ -205,3 +205,5 @@ ML/GaBTC/result/*
 ML/GaBTC/result_bybit/*
 ML/GaBTC/last_fetch_date.txt
 ML/GaBTC/result_live_bybit/*
+ML/GaBTC/result_live_bybit_ENS/*
+ML/GaBTC/result_live_bybit_ENS/*

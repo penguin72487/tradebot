@@ -9,6 +9,9 @@ DB -> OHLCV -> pandas_ta + TA-Lib -> 1..6 階變化率 -> 多種標準化(rollin
 import os, re, sys, time, math, random, warnings, logging
 from typing import Optional, List, Tuple
 import numpy as np
+if not hasattr(np, "NaN"):
+    np.NaN = np.nan  # 熱補丁：讓 pandas_ta 能從 numpy 匯入到 NaN
+
 import pandas as pd
 
 # ========= 目錄與檔名 =========
@@ -40,7 +43,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCFG_DIR)
 EXCHANGE = "bybit"
 PRODUCT  = "perpetual"       # spot/future/perpetual
 SYMBOL   = "BTCUSDT"
-INTERVAL = "15"             # 15m = 15分鐘
+INTERVAL = "240"             # 15m = 15分鐘
 DB_TABLE = "price"           # 你的資料表名稱
 FEATURES_PARQUET = os.path.join(RESULT_DIR, f"features_{EXCHANGE}_{PRODUCT}_{SYMBOL}_{INTERVAL}.parquet")
 
@@ -366,11 +369,8 @@ def row_maxabs_scaling(X):
 SCALERS = {
     'z': StandardScaler(),
     'minmax': MinMaxScaler(),
-    'maxabs': MaxAbsScaler(),
     'robust': RobustScaler(),
-    'row_maxabs': FunctionTransformer(row_maxabs_scaling, validate=False),
-    'rank': FunctionTransformer(rank_scaler, validate=False),
-    'unit_vector': FunctionTransformer(unit_vector_featurewise, validate=False),
+    # 'unit_vector': FunctionTransformer(unit_vector_featurewise, validate=False),
     'tanh': FunctionTransformer(tanh_estimator_scaling, validate=False),
     'zca': FunctionTransformer(zca_whitening, validate=False),
 }
@@ -446,9 +446,9 @@ def build_or_load_features() -> pd.DataFrame:
     num_cols = feats.select_dtypes(include=[np.number]).columns.tolist()
     feats[num_cols] = feats[num_cols].replace([np.inf, -np.inf], np.nan).ffill().fillna(0.0)
 
-    # 6 階變化率
-    logging.info("Adding pct_change(1..6) ...")
-    feats = add_pct_changes(feats, num_cols, steps=6)
+    # 1 階變化率
+    logging.info("Adding pct_change(1..1) ...")
+    feats = add_pct_changes(feats, num_cols, steps=3)
 
     # rolling 標準化（block 平行）
     logging.info("Rolling scalers (block parallel) ...")

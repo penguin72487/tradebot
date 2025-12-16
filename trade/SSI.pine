@@ -1,0 +1,316 @@
+//@version=6
+strategy(
+    "SSI Modular Strategy (10x10 A/I) + Leverage (Long/Short, size by posSize)",
+    overlay=true,
+    initial_capital=100000,
+    default_qty_type=strategy.percent_of_equity,
+    commission_type=strategy.commission.percent,
+    commission_value=0.04,
+    pyramiding=0
+)
+
+// =====================
+// Inputs
+// =====================
+shortWin = input.int(24, "Short window", minval=5)
+longWin  = input.int(240, "Long window", minval=20)
+volWin   = input.int(48, "Vol window", minval=5)
+zWin     = input.int(240, "Z-score window", minval=20)
+temp     = input.float(1.0, "Temperature", minval=0.1, step=0.1)
+
+maxPos   = input.float(50.0, "Max base position % (before leverage)", minval=1, maxval=100)
+minPos   = input.float(0.0, "Min base position % (deadzone)", minval=0.0, maxval=20.0)
+
+useShort = input.bool(true, "Enable Shorts")
+useLong  = input.bool(true, "Enable Longs")
+
+// Leverage controls
+leverage       = input.float(1.0, "Leverage (x)", minval=1.0, step=0.25)
+maxLeveragePos = input.float(300.0, "Max final position % (after leverage)", minval=1, maxval=1000)
+
+// Optional: rebalance size while holding
+rebalance = input.bool(false, "Rebalance position size while in regime")
+
+// 10x10 selector
+actChoice = input.string("A1 Mom+Pers (default)", "Activator (10)", options=[
+    "A1 Mom+Pers (default)",
+    "A2 Momentum only",
+    "A3 Persistence only",
+    "A4 Trend slope (EMA diff)",
+    "A5 Breakout strength",
+    "A6 Volume-weighted momentum",
+    "A7 RSI impulse",
+    "A8 MACD histogram",
+    "A9 OBV impulse",
+    "A10 ADX trend strength"
+])
+
+inhChoice = input.string("I1 Vol+MeanRevert (default)", "Inhibitor (10)", options=[
+    "I1 Vol+MeanRevert (default)",
+    "I2 Volatility only",
+    "I3 MeanRevert only",
+    "I4 ATR% (vol of price)",
+    "I5 Bollinger width",
+    "I6 VWAP distance",
+    "I7 Choppiness index",
+    "I8 Drawdown pressure",
+    "I9 Volume drop pressure",
+    "I10 RSI extreme pressure"
+])
+
+// weights for the combo options
+w_mom  = input.float(0.7, "A weights (for A1): momentum", minval=0, maxval=1, step=0.05)
+w_pers = input.float(0.3, "A weights (for A1): persistence", minval=0, maxval=1, step=0.05)
+
+w_vol  = input.float(0.6, "I weights (for I1): volatility", minval=0, maxval=1, step=0.05)
+w_mr   = input.float(0.4, "I weights (for I1): mean-revert", minval=0, maxval=1, step=0.05)
+
+// =====================
+// Helpers
+// =====================
+f_safediv(n, d) =>
+    d == 0.0 ? na : (n / d)
+
+f_zscore(x, win) =>
+    mu = ta.sma(x, win)
+    sd = ta.stdev(x, win)
+    f_safediv(x - mu, sd)
+
+f_softmax3(a, b, c) =>
+    m  = math.max(a, math.max(b, c))
+    ea = math.exp(a - m)
+    eb = math.exp(b - m)
+    ec = math.exp(c - m)
+    s  = ea + eb + ec
+    [ea / s, eb / s, ec / s]
+
+// clamp helper
+f_clamp(x, lo, hi) =>
+    math.max(lo, math.min(hi, x))
+
+// =====================
+// Feature pool (compute once)
+// =====================
+eps = 1e-9
+logret = math.log(close) - math.log(close[1])
+
+// Momentum / persistence
+mom   = ta.ema(logret, shortWin)
+mom_z = f_zscore(mom, zWin)
+
+pers   = ta.correlation(logret, logret[1], shortWin)
+pers_z = f_zscore(pers, zWin)
+
+// Trend slope proxy (EMA diff)
+emaS = ta.ema(close, shortWin)
+emaL = ta.ema(close, longWin)
+slopeProxy = emaS - emaL
+slope_z = f_zscore(slopeProxy, zWin)
+
+// Breakout strength (distance from recent range top/bottom normalized)
+hh = ta.highest(high, shortWin)
+ll = ta.lowest(low, shortWin)
+atr = ta.atr(volWin)
+breakLong  = f_safediv(close - hh, atr)
+breakShort = f_safediv(ll - close, atr)
+breakStrength = breakLong - breakShort  // positive when pushing up, negative when pushing down
+break_z = f_zscore(breakStrength, zWin)
+
+// Volume features
+volChg = ta.ema(ta.change(volume), shortWin)
+volChg_z = f_zscore(volChg, zWin)
+
+// Volume-weighted momentum (proxy for “crowd reinforcement”)
+vwMom_z = f_zscore(mom * (1.0 + nz(volChg_z)), zWin)
+
+// RSI impulse
+rsi = ta.rsi(close, shortWin)
+rsiImpulse = ta.ema(rsi - rsi[1], shortWin)
+rsiImp_z = f_zscore(rsiImpulse, zWin)
+
+// MACD histogram
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+macdHist_z = f_zscore(histLine, zWin)
+
+// OBV impulse
+obv = ta.obv(close, volume)
+obvImp = ta.ema(obv - obv[1], shortWin)
+obvImp_z = f_zscore(obvImp, zWin)
+
+// ADX trend strength
+adx = ta.adx(shortWin)
+adx_z = f_zscore(adx, zWin)
+
+// Inhibitor candidates
+// Volatility pressure
+volR = ta.stdev(logret, volWin)
+vol_z = f_zscore(volR, zWin)
+
+// Mean-reversion pressure (distance from long EMA normalized)
+longMA = ta.ema(close, longWin)
+dist = close - longMA
+distNorm = na(atr) ? f_safediv(math.abs(dist), ta.stdev(close, volWin)) : f_safediv(math.abs(dist), atr)
+mr_z = f_zscore(distNorm, zWin)
+
+// ATR% of price
+atrp = f_safediv(atr, close)
+atrp_z = f_zscore(atrp, zWin)
+
+// Bollinger width
+basis = ta.sma(close, volWin)
+dev = ta.stdev(close, volWin)
+upper = basis + 2.0 * dev
+lower = basis - 2.0 * dev
+bbWidth = f_safediv(upper - lower, basis)
+bbWidth_z = f_zscore(bbWidth, zWin)
+
+// VWAP distance
+vwap = ta.vwap(hlc3)
+vwapDist = f_safediv(math.abs(close - vwap), atr)
+vwapDist_z = f_zscore(vwapDist, zWin)
+
+// Choppiness index (range compression / anti-trend)
+tr = ta.tr(true)
+sumTR = ta.sum(tr, shortWin)
+rangeHL = ta.highest(high, shortWin) - ta.lowest(low, shortWin)
+chop = 100.0 * math.log10(f_safediv(sumTR, rangeHL + eps)) / math.log10(shortWin)
+chop_z = f_zscore(chop, zWin)
+
+// Drawdown pressure (distance from rolling peak)
+peak = ta.highest(close, longWin)
+dd = 1.0 - f_safediv(close, peak + eps)   // 0..1
+dd_z = f_zscore(dd, zWin)
+
+// Volume drop pressure (liquidity drying up proxy)
+volDrop = -ta.ema(ta.change(volume), shortWin)
+volDrop_z = f_zscore(volDrop, zWin)
+
+// RSI extreme pressure (far from 50 implies stretched → reversion risk)
+rsiExtreme = math.abs(rsi - 50.0)
+rsiExtreme_z = f_zscore(rsiExtreme, zWin)
+
+// =====================
+// Activator / Inhibitor selection (10x10)
+// =====================
+// normalize combo weights
+wA_sum = math.max(w_mom + w_pers, eps)
+wI_sum = math.max(w_vol + w_mr, eps)
+w_momN  = w_mom  / wA_sum
+w_persN = w_pers / wA_sum
+w_volN  = w_vol  / wI_sum
+w_mrN   = w_mr   / wI_sum
+
+A =
+     actChoice == "A1 Mom+Pers (default)"      ? (w_momN * mom_z + w_persN * pers_z) :
+     actChoice == "A2 Momentum only"           ? mom_z :
+     actChoice == "A3 Persistence only"        ? pers_z :
+     actChoice == "A4 Trend slope (EMA diff)"  ? slope_z :
+     actChoice == "A5 Breakout strength"       ? break_z :
+     actChoice == "A6 Volume-weighted momentum"? vwMom_z :
+     actChoice == "A7 RSI impulse"             ? rsiImp_z :
+     actChoice == "A8 MACD histogram"          ? macdHist_z :
+     actChoice == "A9 OBV impulse"             ? obvImp_z :
+     actChoice == "A10 ADX trend strength"     ? adx_z :
+                                                 (w_momN * mom_z + w_persN * pers_z)
+
+I =
+     inhChoice == "I1 Vol+MeanRevert (default)" ? (w_volN * vol_z + w_mrN * mr_z) :
+     inhChoice == "I2 Volatility only"          ? vol_z :
+     inhChoice == "I3 MeanRevert only"          ? mr_z :
+     inhChoice == "I4 ATR% (vol of price)"      ? atrp_z :
+     inhChoice == "I5 Bollinger width"          ? bbWidth_z :
+     inhChoice == "I6 VWAP distance"            ? vwapDist_z :
+     inhChoice == "I7 Choppiness index"         ? chop_z :
+     inhChoice == "I8 Drawdown pressure"        ? dd_z :
+     inhChoice == "I9 Volume drop pressure"     ? volDrop_z :
+     inhChoice == "I10 RSI extreme pressure"    ? rsiExtreme_z :
+                                                  (w_volN * vol_z + w_mrN * mr_z)
+
+// =====================
+// SSI + probabilities
+// =====================
+raw = f_safediv(A - I, temp)
+// tanh replacement
+SSI = 2.0 / (1.0 + math.exp(-2.0 * raw)) - 1.0
+
+balance = -math.abs(A - I)
+highvol = nz(vol_z, 0.0)  // keep a universal "stress" channel based on vol
+
+s_continue = (A - I)
+s_reverse  = (I - A) + 0.5 * highvol
+s_mellow   = balance - 0.2 * highvol
+
+[p_continue, p_mellow, p_reverse] = f_softmax3(s_continue, s_mellow, s_reverse)
+
+// Regime
+isContinue = p_continue > p_mellow and p_continue > p_reverse
+isReverse  = p_reverse  > p_continue and p_reverse  > p_mellow
+
+// =====================
+// Position sizing (by SSI magnitude) + leverage
+// =====================
+posLong  = math.max(SSI, 0)
+posShort = math.max(-SSI, 0)
+
+baseSizeLong  = math.min(maxPos, math.max(minPos, posLong  * maxPos))
+baseSizeShort = math.min(maxPos, math.max(minPos, posShort * maxPos))
+
+posSizeLong  = math.min(maxLeveragePos, baseSizeLong  * leverage)
+posSizeShort = math.min(maxLeveragePos, baseSizeShort * leverage)
+
+// Entry conditions
+wantLong  = useLong  and isContinue and SSI > 0 and not na(posSizeLong)
+wantShort = useShort and isReverse  and SSI < 0 and not na(posSizeShort)
+
+// Gate: only act on signal change
+enterLong  = wantLong  and not wantLong[1]
+enterShort = wantShort and not wantShort[1]
+
+// Exit logic
+exitLong  = (isReverse or SSI <= 0)
+exitShort = (isContinue or SSI >= 0)
+
+// =====================
+// Orders
+// =====================
+if enterLong
+    strategy.close("Short")
+    strategy.entry("Long", strategy.long, qty=posSizeLong)
+
+if enterShort
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short, qty=posSizeShort)
+
+if strategy.position_size > 0 and exitLong
+    strategy.close("Long")
+
+if strategy.position_size < 0 and exitShort
+    strategy.close("Short")
+
+// Rebalance (optional)
+if rebalance and strategy.position_size > 0 and wantLong
+    if math.abs(posSizeLong - nz(posSizeLong[1])) > 1
+        strategy.entry("Long", strategy.long, qty=posSizeLong)
+
+if rebalance and strategy.position_size < 0 and wantShort
+    if math.abs(posSizeShort - nz(posSizeShort[1])) > 1
+        strategy.entry("Short", strategy.short, qty=posSizeShort)
+
+// =====================
+// Plots (sanity)
+// =====================
+plot(SSI, title="SSI", color=color.blue)
+plot(posSizeLong, title="posSizeLong (%) after leverage", color=color.new(color.green, 0))
+plot(posSizeShort, title="posSizeShort (%) after leverage", color=color.new(color.red, 0))
+
+// Optional label to show current combo
+var label lb = na
+if barstate.islast
+    label.delete(lb)
+    lb := label.new(
+        bar_index, close,
+        "Act: " + actChoice + "\nInh: " + inhChoice + "\nSSI=" + str.tostring(SSI, format.mintick),
+        style=label.style_label_left,
+        textcolor=color.white,
+        color=color.new(color.black, 0)
+    )

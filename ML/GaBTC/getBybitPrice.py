@@ -18,7 +18,7 @@ from pybit.unified_trading import HTTP
 EXCHANGE = "bybit"
 PRODUCT  = "perpetual"   # 你的表用語：spot/future/perpetual
 SYMBOL   = "BTCUSDT"
-INTERVAL = "240"          # Bybit 的 1 = 1 minute
+INTERVAL = "1"          # Bybit 的 1 = 1 minute
 
 def interval_to_ms(interval: str) -> int:
     s = interval.upper()

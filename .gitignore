@@ -207,3 +207,11 @@ ML/GaBTC/last_fetch_date.txt
 ML/GaBTC/result_live_bybit/*
 ML/GaBTC/result_live_bybit_ENS/*
 ML/GaBTC/result_live_bybit_ENS/*
+ML/GaBTC/result_live_bybitHmm/*.parquet
+*.parquet
+ML/GaBTC/result_live_bybitHmm/models_archive.json
+ML/GaBTC/result_live_bybitHmm/weights/weights_20210819_1200_HMMGA.pt
+ML/TAE/best_model.pt
+ML/TAE/performance_arrays.npz
+qlib/qlib_data/*
+qlib/qlib_data_btc/*

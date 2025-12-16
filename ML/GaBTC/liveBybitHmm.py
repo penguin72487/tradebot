@@ -50,12 +50,12 @@ print("CUDA:", torch.version.cuda)
 EXCHANGE = "bybit"
 PRODUCT  = "perpetual"   # spot/future/perpetual
 SYMBOL   = "BTCUSDT"
-INTERVAL = 60           # 分鐘 (int)
+INTERVAL = 240           # 分鐘 (int)
 ANN_FACTOR = math.sqrt(int(24*60/INTERVAL)*365)  # 240m: 一天約6根, 一年~2190根 → sqrt(年bar數)
 
 # ========== 參數 ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULT_DIR = os.path.join(BASE_DIR, "result_live_bybit"); os.makedirs(RESULT_DIR, exist_ok=True)
+RESULT_DIR = os.path.join(BASE_DIR, "result_live_bybitHmm"); os.makedirs(RESULT_DIR, exist_ok=True)
 RESULT_PNG_DIR = os.path.join(RESULT_DIR, "png"); os.makedirs(RESULT_PNG_DIR, exist_ok=True)
 FEATURE_PARQUET = os.path.join(RESULT_DIR, f"features_{INTERVAL}.parquet")
 # --------- 精簡 checkpoint（每窗一檔；只存 elites + seeds） ----------
@@ -82,7 +82,7 @@ GENS         = 2**13     # 單次/續訓要跑的 GA 代數；初次建議設較
 AT_LEAST_IMPROVE = 2    # 是否至少要有提升才存模型（避免退步）
 EARLY_STOP_PATIENCE = 500  # 若超過這麼多代沒提升就提前停止（避免無謂計算）
 # 特徵工程設定
-STD_WIN = 2**12                 # 滾動標準化視窗 (16384)
+STD_WIN = 2**10                 # 滾動標準化視窗 (16384)
 change_rate_steps = 6           # 1~6次變化率
 MIN_HISTORY = 1024+STD_WIN + 1               # 至少這麼多列才開始訓練
 
@@ -251,25 +251,28 @@ def _align_df(out, prefix):
 
 def compute_Pandas_Ta_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    嘗試呼叫 pandas_ta 中所有「看起來需要 O/H/L/C/V」的函式。
-    - 僅提供存在於 df 的對應欄位
-    - 如函式包含 length/period 參數，會壓到 <= STD_WIN
-    - 出錯跳過並記錄
+    呼叫 pandas_ta 指標（改為「位置索引安全」版本）：
+    - 輸入給 pandas_ta 的 Series 一律 reset_index(drop=True) 成 RangeIndex
+    - 計算完把輸出 DataFrame/Series 的 index 換回原本的 DatetimeIndex
+    - 出錯跳過並記錄（best-effort）
     """
-    logging.info("Computing pandas_ta features (best-effort, skip on error)...")
+    logging.info("Computing pandas_ta features (pos-index safe)...")
     feats = []
     tried, ok = 0, 0
+
+    # 保留原本索引，以便輸出時恢復
+    orig_index = df.index
 
     # 候選參數名（不同函式可能叫不一樣）
     price_arg_alias = {
         "open": ["open", "o"],
         "high": ["high", "h"],
-        "low": ["low", "l"],
-        "close": ["close", "c"],
-        "volume": ["volume", "vol", "v"]
+        "low":  ["low", "l"],
+        "close":["close","c"],
+        "volume":["volume","vol","v"]
     }
 
-    # 先準備可用輸入
+    # 先準備可用輸入（原 df 的欄位）
     inputs = {}
     for k, aliases in price_arg_alias.items():
         for a in aliases:
@@ -279,16 +282,11 @@ def compute_Pandas_Ta_features(df: pd.DataFrame) -> pd.DataFrame:
         if k not in inputs and k in df.columns:
             inputs[k] = df[k]
 
-    # 動態找出 pandas_ta 裡可呼叫的函式
     for name in dir(pta):
-        if name.startswith("_"): 
+        if name.startswith("_"):
             continue
         func = getattr(pta, name)
-        if not callable(func): 
-            continue
-
-        # 跳過類別與非技術類
-        if inspect.isclass(func):
+        if not callable(func) or inspect.isclass(func):
             continue
 
         # 只嘗試接受 O/H/L/C/V 任一參數的函式
@@ -296,35 +294,56 @@ def compute_Pandas_Ta_features(df: pd.DataFrame) -> pd.DataFrame:
             sig = inspect.signature(func)
         except (TypeError, ValueError):
             continue
-
         params = sig.parameters
-        has_price_input = any(p in params for p in ["open", "high", "low", "close", "volume", "o", "h", "l", "c", "v"])
+        has_price_input = any(p in params for p in ["open","high","low","close","volume","o","h","l","c","v"])
         if not has_price_input:
             continue
 
         tried += 1
+
+        # 準備 kwargs：把 Series 改成 RangeIndex（位置索引安全）
         kwargs = {}
-        # 傳遞對應輸入（若該函式參數名是 o/h/l/c/v 也支援）
         for std_key, aliases in price_arg_alias.items():
             for a in aliases:
                 if a in params and std_key in inputs:
-                    kwargs[a] = inputs[std_key]
+                    s = inputs[std_key]
+                    s_pos = s.reset_index(drop=True)         # 變成 RangeIndex: 0..n-1
+                    s_pos.name = s.name                      # 保留欄名
+                    kwargs[a] = s_pos
+                    break
 
-        # 常見窗長參數名稱（盡量不超過 STD_WIN）
+        # 常見窗長參數名稱（壓到 <= STD_WIN）
         for wnd_name in ["length", "window", "timeperiod", "n", "fast", "slow", "long", "short", "lbp", "period"]:
             if wnd_name in params:
-                kwargs[wnd_name] = _clip_len(params[wnd_name].default if params[wnd_name].default is not inspect._empty else 14, STD_WIN)
+                default_len = params[wnd_name].default if params[wnd_name].default is not inspect._empty else 14
+                kwargs[wnd_name] = _clip_len(default_len, STD_WIN)
 
-        # 有些函式有 append / mamode / talib 等參數；不主動開 talib 與 append
         if "append" in params:
             kwargs["append"] = False
 
         try:
-            out = func(**kwargs)
+            # 抑制特定 FutureWarning（避免洗版），同時我們已用 RangeIndex 做實體修正
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Series.__getitem__ treating keys as positions is deprecated",
+                    category=FutureWarning
+                )
+                out = func(**kwargs)
+
             out = _align_df(out, f"pta_{name}")
             if out is not None:
+                # 把輸出的 index 換回原本的 DatetimeIndex（長度通常相同）
+                if len(out) == len(orig_index):
+                    out.index = orig_index
+                else:
+                    # 長度不一致時，做尾端對齊（大多指標與原長度一致；保險處理）
+                    out.index = pd.RangeIndex(len(out))
+                    out = out.tail(len(orig_index))
+                    out.index = orig_index
                 feats.append(out)
                 ok += 1
+
         except Exception as e:
             logging.debug(f"[pandas_ta] skip {name}: {e}")
 
@@ -333,6 +352,7 @@ def compute_Pandas_Ta_features(df: pd.DataFrame) -> pd.DataFrame:
         df = df.join(feat_df, how="left")
     logging.info(f"pandas_ta done. tried={tried}, ok={ok}, cols_now={df.shape[1]}")
     return df
+
 
 
 def compute_TA_Lib_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -436,7 +456,6 @@ def compute_Scaler_features(df: pd.DataFrame, win: int) -> pd.DataFrame:
       - robust: (x - median) / IQR
       - tanh:   0.5 * (tanh(0.01 * z) + 1)
       - unit_vector: x / ||x|| 
-      - zca : 
     """
     logging.info(f"Adding rolling scalers (window={win})...")
     eps = 1e-12
@@ -582,6 +601,18 @@ def init_compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
 print(f"Raw data: {df.shape}, from {df.index.min()} to {df.index.max()}")
 df = init_compute_features(df)
+if "future_returns" not in df.columns:
+    logging.warning("Feature parquet missing 'future_returns' — rebuilding from 'close'.")
+    if "close" not in df.columns:
+        raise KeyError("Both 'future_returns' and 'close' are missing; cannot rebuild.")
+    df["future_returns"] = (
+        df["close"].pct_change().shift(-1).fillna(0.0).astype(np.float32)
+    )
+    try:
+        df.to_parquet(FEATURE_PARQUET)
+        logging.info("Patched features parquet with 'future_returns'.")
+    except Exception as e:
+        logging.warning(f"Failed to rewrite parquet: {e}")
 print(f"Data with features: {df.shape}, from {df.index.min()} to {df.index.max()}")
 
 # ===================== GA 策略 (PURE CUDA, AMP/TF32, optional torch.compile) =====================
@@ -634,6 +665,7 @@ def select_feature_columns(df: pd.DataFrame) -> List[str]:
 
 FEATURE_COLS = select_feature_columns(df)
 logging.info(f"Feature columns = {len(FEATURE_COLS)}")
+
 
 X_all_t = torch.as_tensor(df[FEATURE_COLS].to_numpy(np.float32), device=device)
 y_all_t = torch.as_tensor(df["future_returns"].to_numpy(np.float32), device=device)
@@ -734,479 +766,6 @@ def plot_oos_for_window(best_w_np: np.ndarray, best_m_np: np.ndarray,
 
 
 
-# ===== 背景 I/O：非同步存檔與存圖 =====
-from concurrent.futures import ThreadPoolExecutor
-import threading, atexit
-
-IO_MAX_WORKERS = 2               # 同時做 2 個 I/O 任務就好
-IO_MAX_OUTSTANDING = 64          # 最多排隊 64 個，超過就丟掉避免記憶體爆
-_io_exec = ThreadPoolExecutor(max_workers=IO_MAX_WORKERS, thread_name_prefix="io")
-_io_sem  = threading.BoundedSemaphore(IO_MAX_OUTSTANDING)
-
-def submit_io(fn, *args, **kwargs):
-    """把 I/O 任務丟到背景做；排隊太多就丟棄此任務（並 log）。"""
-    acquired = _io_sem.acquire(blocking=False)
-    if not acquired:
-        logging.warning(f"[io] backlog full, drop task: {getattr(fn, '__name__', str(fn))}")
-        return
-    def _wrapper():
-        try:
-            fn(*args, **kwargs)
-        except Exception as e:
-            logging.exception(f"[io] async task error: {e}")
-        finally:
-            _io_sem.release()
-    _io_exec.submit(_wrapper)
-
-def _io_shutdown():
-    _io_exec.shutdown(wait=True)
-atexit.register(_io_shutdown)
-
-
-# --------- 核心：整群評分（Sharpe, 年化） ----------
-# 把「圖內」與「圖外」分開：圖內不做 .item()、不組 dict
-def _evaluate_population_cuda_core(W: torch.Tensor, M: torch.Tensor,
-                                   X: torch.Tensor, y: torch.Tensor):
-    ctx = torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP)
-    with ctx:
-        W_eff = decode_W(W)
-        M_bin = gate_mask(M)                                   # (pop,D) ∈ {0,1}
-
-        WT_masked = (W_eff * M_bin).t()
-        dot = (X.float() @ WT_masked.float())                  # (T, pop)
-        denom = torch.clamp(M_bin.sum(dim=1, keepdim=True).t(), min=1.0)  # (1, pop)
-        pos = (dot / denom).to(X.dtype)
-        # pos = pos.clamp(-100.0, 100.0)   # 保護
-
-        prev = torch.zeros((1, pos.shape[1]), device=device, dtype=pos.dtype)
-        delta_pos = pos - torch.cat([prev, pos[:-1, :]], dim=0)
-        costs = float(FEE) * delta_pos.abs()
-
-        rets = pos * y.unsqueeze(1) - costs
-
-    rets32 = rets.float()
-    mu = rets32.mean(dim=0)
-    sd = rets32.std(dim=0, unbiased=False).clamp_min(1e-12)
-    fit_base = compute_fitness(rets32)                         # (pop,)
-
-    # ===== Soft penalties（軟性，保留原味，不做 clamp）=====
-    pen = torch.zeros_like(fit_base)
-
-    if W_L2_PENALTY > 0:
-        pen = pen + W_L2_PENALTY * (W.pow(2).mean(dim=1))     # 對「基因本身」做 L2（不影響輸出檔）
-
-    if POS_L1_PENALTY > 0:
-        pen = pen + POS_L1_PENALTY * (pos.abs().mean(dim=0))  # 控制平均曝險
-
-    if TURNOVER_PENALTY > 0:
-        pen = pen + TURNOVER_PENALTY * (delta_pos.abs().mean(dim=0))  # 控制換手
-
-    if SPARSITY_PENALTY > 0:
-        pen = pen + SPARSITY_PENALTY * (M_bin.mean(dim=1))    # 鼓勵少用特徵（可提升泛化）
-
-    fitness = fit_base - pen
-
-    best_idx = int(torch.argmax(fitness).item())
-    eq_best = torch.cumsum(torch.log1p(rets32[:, best_idx]), dim=0).exp()
-    eq_best_np = eq_best.detach().cpu().numpy()
-
-    stats_best = dict(
-        sharpe=float(fitness[best_idx].item()),
-        mean=float(mu[best_idx].item()),
-        std=float(sd[best_idx].item()),
-        last_pos=float(pos[-1, best_idx].float().item())
-    )
-    return fitness, best_idx, eq_best_np, stats_best
-
-
-def init_population(pop_size: int, D: int):
-    """
-    回傳：
-      W: (pop, D) 連續基因 ∈ [0,1] → decode → [-1,1]
-      M: (pop, D) 連續基因 ∈ [0,1] → gate   → {0,1}
-    """
-    W = torch.empty((pop_size, D), device=device, dtype=torch.float32).uniform_(0.0, 1.0)
-    M = torch.empty((pop_size, D), device=device, dtype=torch.float32).uniform_(0.0, 1.0)
-    return W, M
-
-
-def tournament_select_indices(fitness: torch.Tensor, needed: int, k: int = 3) -> torch.Tensor:
-    pop = fitness.shape[0]
-    cand = torch.randint(0, pop, (needed, k), device=device)       # (needed, k)
-    cand_fit = fitness[cand]                                                    # (needed, k)
-    winners = cand.gather(1, cand_fit.argmax(dim=1, keepdim=True)).squeeze(1)   # (needed,)
-    return winners
-
-def produce_children(W: torch.Tensor, M: torch.Tensor,
-                     fitness: torch.Tensor, elites: int):
-    pop, D = W.shape
-    elite_idx = torch.topk(fitness, k=elites, largest=True).indices
-    W_e, M_e = W[elite_idx].clone(), M[elite_idx].clone()
-
-    needed = pop - elites
-    p1 = tournament_select_indices(fitness, needed, k=3)
-    p2 = tournament_select_indices(fitness, needed, k=3)
-
-    # 連續基因：線性混合（不 clamp，保留原味）
-    alpha = torch.empty((needed, 1), device=device).uniform_(0.2, 0.8)
-    W_c = alpha * W[p1] + (1 - alpha) * W[p2]
-
-    # Mask：均勻交叉 + bit-flip（不 clamp，保留原味）
-    take_from_p1 = (torch.rand((needed, D), device=device) < 0.5).to(torch.float32)
-    M_c = take_from_p1 * M[p1] + (1 - take_from_p1) * M[p2]
-
-    # 變異：加噪音／翻轉（不 clamp）
-    mut_mask_col = (torch.rand(needed, 1, device=device) < float(MUT_RATE))
-    noise_w = torch.normal(0.0, float(MUT_SIGMA), size=W_c.shape, device=device)
-    W_c = W_c + mut_mask_col.to(W_c.dtype) * noise_w
-
-    flip = (torch.rand((needed, D), device=device) < float(MUT_RATE_MASK))
-    M_c = torch.where(flip, 1.0 - M_c, M_c)
-
-    W_new = torch.cat([W_e, W_c], dim=0)
-    M_new = torch.cat([M_e, M_c], dim=0)
-    return W_new, M_new
-
-
-
-# --- torch.compile 加速（Inductor）---
-if USE_TORCH_COMPILE:
-    try:
-        # 可選的 inductor 調參：開啟更激進的 autotune
-        try:
-            import torch._inductor.config as inductor_config
-            inductor_config.max_autotune_gemm = True
-            inductor_config.max_autotune_pointwise = True
-        except Exception as _:
-            pass
-
-        # 對計算最重的兩個函式做編譯包裹
-        _evaluate_population_cuda_core = torch.compile(
-            _evaluate_population_cuda_core,
-            mode="max-autotune",   # GPU 場景建議值
-            fullgraph=False,       # 允許圖中斷，避免遇到 Python/NumPy 步驟失敗
-            dynamic=True           # 對輸入尺寸更有彈性（同窗內尺寸固定仍能吃到快取）
-        )
-        produce_children = torch.compile(
-            produce_children,
-            mode="max-autotune",
-            fullgraph=False,
-            dynamic=True
-        )
-        logging.info("torch.compile acceleration enabled for GA core.")
-    except Exception as e:
-        logging.warning(f"torch.compile 加速無法啟用，改回 eager：{e}")
-        USE_TORCH_COMPILE = False
-
-
-
-# --------- CUDA 版 GA 訓練單窗 ----------
-def ga_train_one_window_cuda(
-    X_t: torch.Tensor,
-    y_t: torch.Tensor,
-    gens: int,
-    window_label: str,
-    warm_start: dict | None = None,   # {"W": np.ndarray, "M": np.ndarray}
-    seed_prev: dict | None = None,    # {"w": np.ndarray, "m": np.ndarray}
-):
-    T, D = X_t.shape
-    pop = POP_SIZE
-    elites = max(1, int(ELITE_FRAC * pop))
-
-    resumed = load_checkpoint_slim(window_label, pop=pop, D=D)
-    if resumed:
-        W = resumed["W"]; M = resumed["M"]
-        start_gen = resumed["start_gen"]
-        prev_best = resumed["prev_best"]
-        logging.info(f"[{window_label}] resume from slim ckpt @ gen {start_gen-1}, best={prev_best:.4f}")
-    else:
-        if warm_start and all(k in warm_start for k in ("W","M")):
-            W = torch.as_tensor(warm_start["W"], device=device, dtype=torch.float32).view(pop, D).clone()
-            M = torch.as_tensor(warm_start["M"], device=device, dtype=torch.float32).view(pop, D).clone()
-            if W.shape != (pop, D) or M.shape != (pop, D):
-                W, M = init_population(pop, D)
-        else:
-            W, M = init_population(pop, D)
-        start_gen = 1
-        prev_best = -1e12
-
-    # 跨窗種子（只有在沒有 warm-start 時才用）
-    if warm_start is None and seed_prev and all(k in seed_prev for k in ("w","m")):
-        prev_w = torch.as_tensor(seed_prev["w"], device=device, dtype=torch.float32).view(1, D)
-        prev_m = torch.as_tensor(seed_prev["m"], device=device, dtype=torch.float32).view(1, D)
-        k_seed = max(2, pop // 64)
-        noise_w = torch.normal(0.0, 0.005, size=(k_seed, D), device=device)
-        flip = (torch.rand((k_seed, D), device=device) < 0.02)
-        W[:k_seed] = (prev_w + noise_w)
-        M_seed = prev_m.repeat(k_seed, 1)
-        M[:k_seed] = torch.where(flip, 1.0 - M_seed, M_seed)
-        logging.info(f"[{window_label}] seeded {k_seed} from previous best.")
-
-    best_hist = [] if start_gen == 1 else [prev_best]
-    bh_np = torch.cumsum(torch.log1p(y_t.float()), dim=0).exp().detach().cpu().numpy()
-
-    no_improve_gens = 0
-    improved_gens = 0
-
-    for gen in range(start_gen, gens + 1):
-        if no_improve_gens >= EARLY_STOP_PATIENCE and improved_gens >= AT_LEAST_IMPROVE:
-            logging.info(f"[{window_label}] early stopping at gen {gen-1} (no improvement for {no_improve_gens} gens).")
-            break
-
-        fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, M, X_t, y_t)
-        cur_best = float(fitness[best_idx].item())
-        best_hist.append(cur_best)
-
-        improved = cur_best > prev_best + IMPROVE_DELTA
-        if improved:
-            no_improve_gens = 0
-            improved_gens += 1
-            save_dir = os.path.join(RESULT_PNG_DIR, f"{window_label}"); os.makedirs(save_dir, exist_ok=True)
-            save_png = os.path.join(save_dir, f"Final_{window_label}.png")
-            plot_equity(eq_best_np, bh_np, f"[{window_label}] Gen {gen} | {fitness_metric}={cur_best:.3f}", save_png)
-            plot_equity(eq_best_np, bh_np, f"[{window_label}] Gen {gen} | {fitness_metric}={cur_best:.3f}", "Train_Progressing.png")
-
-        else:
-            no_improve_gens += 1
-
-        if improved:
-            save_checkpoint_slim(window_label, gen, W, M, fitness, best_hist, pop, D)
-            prev_best = cur_best
-            logging.info(f"[{window_label}] Gen {gen}/{gens} | {fitness_metric}={cur_best:.3f} (improved, ckpt saved)")
-        elif gen % 100 == 0:
-            logging.info(f"[{window_label}] Gen {gen}/{gens} | {fitness_metric}={cur_best:.3f}")
-
-        W, M = produce_children(W, M, fitness, elites)
-
-    fitness, best_idx, eq_best_np, best_stats = _evaluate_population_cuda_core(W, M, X_t, y_t)
-    best_w = W[best_idx].detach().cpu().numpy()
-    best_m = gate_mask(M[best_idx]).detach().cpu().numpy()  # 存 0/1
-
-    save_checkpoint_slim(window_label, gens, W, M, fitness, best_hist, pop, D)
-
-    return {
-        "best_weights": best_w,     # 原味（0~1 基因）
-        "best_mask": best_m,        # 0/1
-        "best_stats": best_stats,
-        "history": best_hist,
-        "last_gen": gens,
-    }
-
-
-
-# --------- 名人堂（Archive） ----------
-def load_archive() -> list:
-    if not os.path.exists(ARCHIVE_PATH): return []
-    try:
-        with open(ARCHIVE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-def save_archive(items: list):
-    with open(ARCHIVE_PATH, "w", encoding="utf-8") as f:
-        json.dump(items, f, indent=2, ensure_ascii=False)
-
-def _ckpt_path(window_label: str) -> str:
-    safe_lbl = window_label.replace(":", "").replace("/", "_")
-    return os.path.join(CKPT_DIR, f"ckpt_{safe_lbl}.pt")
-def save_checkpoint_slim(window_label: str, gen: int,
-                         W: torch.Tensor, M: torch.Tensor,
-                         fitness: torch.Tensor, best_hist: list, pop: int, D: int):
-    k_elite = min(CKPT_ELITES_MAX, max(8, int(ELITE_FRAC * pop)))
-    elite_idx = torch.topk(fitness, k=k_elite, largest=True).indices
-    W_e = W[elite_idx].detach().to("cpu", torch.float16)
-    M_e = M[elite_idx].detach().to("cpu", torch.float16)
-
-    W_s, M_s = init_population(CKPT_SEEDS, D)
-    W_s = W_s.detach().to("cpu", torch.float16)
-    M_s = M_s.detach().to("cpu", torch.float16)
-
-    ck = {
-        "window_label": window_label,
-        "gen": int(gen),
-        "pop": int(pop),
-        "D": int(D),
-        "elite_W": W_e,
-        "elite_M": M_e,
-        "seed_W": W_s,
-        "seed_M": M_s,
-        "best_fitness": float(max(best_hist) if best_hist else -1e18),
-    }
-    torch.save(ck, _ckpt_path(window_label))
-
-def load_checkpoint_slim(window_label: str, pop: int, D: int):
-    p = _ckpt_path(window_label)
-    if not os.path.exists(p):
-        return None
-    ck = torch.load(p, map_location="cpu")
-
-    W_e = ck.get("elite_W"); M_e = ck.get("elite_M")
-    W_s = ck.get("seed_W");  M_s = ck.get("seed_M")
-
-    if W_e is None:
-        return None
-    if M_e is None: M_e = torch.rand_like(W_e)
-    if W_s is None: W_s = torch.rand((CKPT_SEEDS, D), dtype=torch.float16)
-    if M_s is None: M_s = torch.rand_like(W_s)
-
-    W_e = W_e.to(torch.float32, copy=False).to(device)
-    M_e = M_e.to(torch.float32, copy=False).to(device)
-    W_s = W_s.to(torch.float32, copy=False).to(device)
-    M_s = M_s.to(torch.float32, copy=False).to(device)
-
-    k_e, k_s = W_e.shape[0], W_s.shape[0]
-    W = torch.empty((pop, D), device=device, dtype=torch.float32)
-    M = torch.empty((pop, D), device=device, dtype=torch.float32)
-
-    take_e = min(k_e, pop)
-    W[:take_e] = W_e[:take_e]; M[:take_e] = M_e[:take_e]
-    ptr = take_e
-    if ptr < pop and k_s > 0:
-        take_s = min(k_s, pop - ptr)
-        W[ptr:ptr+take_s] = W_s[:take_s]; M[ptr:ptr+take_s] = M_s[:take_s]
-        ptr += take_s
-    if ptr < pop:
-        W_fill, M_fill = init_population(pop - ptr, D)
-        W[ptr:] = W_fill; M[ptr:] = M_fill
-
-    start_gen = int(ck.get("gen", 0)) + 1
-    prev_best = float(ck.get("best_fitness", -1e18))
-    return {"W": W, "M": M, "start_gen": start_gen, "prev_best": prev_best}
-
-def add_model_to_archive(train_end_ts, model_rec: dict):
-    items = load_archive()
-    items.append({
-        "train_end": str(pd.Timestamp(train_end_ts).tz_convert("UTC")),
-        "D": int(D),
-        "weights_file": model_rec["weights_file"],  # .pt
-        "train_sharpe": float(model_rec["train_sharpe"]),
-        "notes": model_rec.get("notes", "")
-    })
-    save_archive(items)
-
-@torch.no_grad()
-def evaluate_archive_until_cuda(items: list, until_idx: int):
-    if not items: return -1, {}
-    valid = []
-    for i, it in enumerate(items):
-        st = np.searchsorted(ts_idx, pd.Timestamp(it["train_end"]), side="right")
-        if st < until_idx and os.path.exists(it["weights_file"]):
-            valid.append((i, st, it["weights_file"]))
-    if not valid: return -1, {}
-
-    best_score, best_idx_global, best_stat = -1e18, -1, {}
-    from collections import defaultdict
-    groups = defaultdict(list)
-    for i, st, wf in valid:
-        groups[st].append((i, wf))
-
-    for st, lst in groups.items():
-        X = X_all_t[st:until_idx]
-        y = y_all_t[st:until_idx]
-
-        Ws, Ls, Ms, idx_map = [], [], [], []
-        for (i, wf) in lst:
-            ck = torch.load(wf, map_location="cpu")
-            w = torch.as_tensor(ck["w"] if "w" in ck else ck["W"].numpy(), dtype=torch.float32, device=device).view(1, -1)
-            l = torch.as_tensor(ck["l"] if "l" in ck else ck["L"].numpy(), dtype=torch.float32, device=device).view(1)
-            m = torch.as_tensor(ck["m"] if "m" in ck else ck["M"].numpy(), dtype=torch.float32, device=device).view(1, -1)
-        W_stack = torch.cat(Ws, dim=0)
-        L_stack = torch.cat(Ls, dim=0).squeeze(1)
-        M_stack = torch.cat(Ms, dim=0)
-
-        fit, loc_best_idx, _, st_best = _evaluate_population_cuda_core(W_stack, L_stack, M_stack, X, y)
-        score = float(fit[loc_best_idx].item())
-        if score > best_score:
-            best_score, best_idx_global, best_stat = score, idx_map[int(loc_best_idx)], st_best
-
-    return best_idx_global, best_stat
-
-
-# --------- 主迴圈（純 CUDA） ----------
-def run_ga_live():
-    items = load_archive()
-    equity_live, bh_live = [1], [1]
-    pos_prev = 0.0
-    prev_best_seed = None  # {"w":..., "m":...}
-
-    start_bar = max(MIN_HISTORY, 2)
-    for t in range(start_bar, len(df)):
-        train_end = t+STD_WIN
-        train_start = t
-
-        X_train = X_all_t[train_start:train_end]
-        y_train = y_all_t[train_start:train_end]
-
-        window_label = f"{ts_idx[train_start].strftime('%Y%m%d_%H%M')}-{ts_idx[train_end].strftime('%Y%m%d_%H%M')}"
-
-        warm = None
-        if train_end - 1 > train_start:
-            prev_end = train_end - 1
-            prev_window_label = f"{ts_idx[train_start].strftime('%Y%m%d_%H%M')}-{ts_idx[prev_end].strftime('%Y%m%d_%H%M')}"
-            prev_resume = load_checkpoint_slim(prev_window_label, pop=POP_SIZE, D=D)
-            if prev_resume:
-                warm = {
-                    "W": prev_resume["W"].detach().cpu().numpy(),
-                    "M": prev_resume["M"].detach().cpu().numpy(),
-                }
-                logging.info(f"[{window_label}] warm-start from previous window elites: {prev_window_label}")
-
-        gens = max(N_GEN_BASE, GENS)
-        rec = ga_train_one_window_cuda(
-            X_train, y_train, gens=gens, window_label=window_label,
-            warm_start=warm, seed_prev=prev_best_seed
-        )
-        best_w = rec["best_weights"]
-        best_m = rec["best_mask"]
-        best_sharpe = float(rec["best_stats"]["sharpe"])
-
-        # OOS plot
-        plot_oos_for_window(best_w, best_m, train_end, window_label)
-
-        # 存權重（原味）
-        weights_dir = os.path.join(RESULT_DIR, "weights"); os.makedirs(weights_dir, exist_ok=True)
-        weights_file = os.path.join(weights_dir, f"weights_{ts_idx[train_end].strftime('%Y%m%d_%H%M')}.pt")
-        torch.save({"w": torch.from_numpy(best_w), "m": torch.from_numpy(best_m)}, weights_file)
-        add_model_to_archive(ts_idx[train_end], {
-            "weights_file": weights_file,
-            "train_sharpe": best_sharpe,
-            "notes": f"window={window_label}"
-        })
-        items = load_archive()
-
-        prev_best_seed = {"w": best_w, "m": best_m}
-
-        # ===== Live 推論（無槓桿）=====
-        use_w_gene = torch.from_numpy(best_w).to(device=device, dtype=torch.float32)
-        use_m_gene = torch.from_numpy(best_m).to(device=device, dtype=torch.float32)
-        use_w = decode_W(use_w_gene)
-        use_m = gate_mask(use_m_gene)
-
-        with torch.amp.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=USE_AMP):
-            x_t = X_all_t[train_end+1:train_end+2]  # (1,D)
-            W_eff = use_w
-            M_bin = use_m
-            WT_masked = (W_eff * M_bin).t()                      # (D,)->(D,1) then transposed
-            dot = (x_t.float() @ WT_masked.float()).squeeze()    # scalar
-            denom = torch.clamp(M_bin.sum(), min=1.0)
-            pos_t = (dot / denom).to(x_t.dtype)
-            pos_t = pos_t.clamp(-10.0, 10.0)   # optional cap
-
-        ret_t = float(pos_t.item() * y_all_t[train_end+1].item() - float(FEE) * abs(float(pos_prev) - float(pos_t.item())))
-        pos_prev = float(pos_t.item())
-
-        equity_live.append((equity_live[-1] if equity_live else 1.0) * (1.0 + ret_t))
-        bh_live.append((bh_live[-1] if bh_live else 1.0) * (1.0 + float(y_all_t[train_end+1].item())))
-
-        live_png = os.path.join(RESULT_DIR, "live_equity.png")
-        plot_equity(np.array(equity_live, np.float64), np.array(bh_live, np.float64), f"Live up to {ts_idx[train_end+1]}", live_png)
-        logging.info(f"[{ts_idx[train_end+1]}] pos={pos_t.item():.3f} ret={ret_t:.6f} bh = {(bh_live[-1]/bh_live[-2])-1:.4f} eq={equity_live[-1]:.4f}")
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-    logging.info("GA live run complete.")
-
 
 
 # 入口
@@ -1215,12 +774,12 @@ if __name__ == "__main__":
     faulthandler.enable()
     atexit.register(lambda: logging.info("=== Program exiting (atexit) ==="))
     try:
-        run_ga_live()
+        run_hmm_ga_live()   # ⬅ 改呼叫新的 HMM→GA(states) 管線
     except SystemExit as e:
         logging.exception(f"SystemExit: {e}")
         raise
     except Exception as e:
-        logging.exception("Fatal error in run_ga_live()")
+        logging.exception("Fatal error in run_hmm_ga_live()")
         raise
     finally:
         logging.info("=== Program end ===")
